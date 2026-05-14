@@ -1,0 +1,68 @@
+name: Build & Minify app.js
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/app.js'
+      - 'build.js'
+      - 'package.json'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install terser
+        run: npm install
+
+      - name: Check src/app.js exists
+        run: |
+          if [ ! -f "src/app.js" ]; then
+            echo "::error::src/app.js NON trovato!"
+            exit 1
+          fi
+          echo "Sorgente OK:"
+          ls -lh src/app.js
+
+      - name: Build minified app.js
+        run: |
+          node build.js
+          ls -lh app.js || (echo "ERRORE: app.js non generato!" && exit 1)
+
+      - name: Commit minified file (with retry on race condition)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app.js
+          if git diff --staged --quiet; then
+            echo "Nessuna modifica al minified file"
+            exit 0
+          fi
+          git commit -m "🤖 Auto-build: minify app.js [skip ci]"
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "✅ Push riuscito al tentativo $i"
+              exit 0
+            fi
+            echo "⚠️ Push fallito al tentativo $i, faccio pull --rebase e ritento..."
+            git pull --rebase origin main
+            sleep 2
+          done
+          echo "::error::Push fallito dopo 5 tentativi"
+          exit 1

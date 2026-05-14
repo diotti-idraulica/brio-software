@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Brio · Fast bar</title>
+<meta name="description" content="Brio · cassa, kiosk, magazzino, dashboard per il fast bar di Piacenza." />
+
+<!-- PWA -->
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#10B981" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Brio" />
+<meta name="mobile-web-app-capable" content="yes" />
+
+<!-- Icons -->
+<link rel="icon" type="image/png" href="/icon-192.png" />
+<link rel="apple-touch-icon" href="/icon-192.png" />
+
+<!-- Preload app.js (servito minificato dalla root) -->
+<link rel="preload" as="script" href="/app.js" />
+
+<!-- Supabase: caricato deferred, app.js attende l'evento "supabase-ready" -->
+<script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.105.4"></script>
+<script defer src="/supabase-init.js"></script>
+<script defer src="/app.js"></script>
+
+<style>
+/* ============================================================
+   BRIO · DESIGN TOKENS
+   ============================================================ */
+:root{
+  /* Palette ufficiale Brio (vedi BRIO_CONTEXT.md §3) */
+  --onyx:        #0A0907;   /* testo primario */
+  --midnight:    #1E3A8A;   /* Stefano · estremo destro gradient */
+  --emerald:     #10B981;   /* Simone · estremo sinistro gradient, CTA */
+  --champagne:   #EFE6D5;   /* sfondi caldi, lettering */
+  --smoke:       #D6CFC0;   /* background secondari */
+
+  /* Derivate */
+  --bg:          #FFFEFA;   /* sfondo principale (champagne più chiaro) */
+  --bg-soft:     #FAF6EC;
+  --bg-card:     #FFFFFF;
+  --line:        rgba(10,9,7, .08);
+  --line-strong: rgba(10,9,7, .14);
+  --text:        var(--onyx);
+  --text-muted:  rgba(10,9,7, .55);
+  --text-dim:    rgba(10,9,7, .35);
+  --danger:      #DC2626;
+  --warning:     #F59E0B;
+  --success:     var(--emerald);
+
+  /* Gradient brand */
+  --grad-brio:   linear-gradient(120deg, var(--emerald) 0%, var(--midnight) 100%);
+
+  /* Spaziature */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-xl: 24px;
+
+  /* Ombre */
+  --sh-1: 0 1px 2px rgba(10,9,7,.06), 0 1px 1px rgba(10,9,7,.04);
+  --sh-2: 0 4px 12px rgba(10,9,7,.08), 0 2px 4px rgba(10,9,7,.04);
+  --sh-3: 0 12px 32px rgba(10,9,7,.12), 0 4px 8px rgba(10,9,7,.06);
+
+  /* Font */
+  --font-display: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-body:    "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* ============================================================
+   RESET
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; font-size: inherit; }
+a { color: inherit; text-decoration: none; }
+img, svg { display: block; max-width: 100%; }
+
+/* ============================================================
+   LOGO BRIO (lockup "b" gradient + wordmark "rio")
+   ============================================================ */
+.brio-logo{ display:inline-flex; align-items:baseline; gap:2px; line-height:1; font-family:var(--font-display); font-style:italic; font-weight:700; }
+.brio-logo .b{
+  background: var(--grad-brio);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  font-size: 1.6em;
+}
+.brio-logo .rio{ color: var(--onyx); }
+.brio-logo.on-dark .rio{ color: var(--champagne); }
+
+/* ============================================================
+   SPLASH (mostrato finché app.js non boota)
+   ============================================================ */
+#splash{
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column; gap: 16px;
+  background: var(--bg);
+  transition: opacity .3s ease, visibility .3s ease;
+}
+#splash.hidden{ opacity:0; visibility:hidden; pointer-events:none; }
+#splash .brio-logo{ font-size: 56px; }
+#splash .tagline{ color: var(--text-muted); font-style: italic; font-size: 14px; }
+
+/* ============================================================
+   BUTTONS
+   ============================================================ */
+.btn{
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 11px 18px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-card);
+  color: var(--text);
+  border-radius: var(--r-md);
+  font-size: 14px; font-weight: 500;
+  transition: transform .08s ease, box-shadow .15s ease, background .15s ease;
+  user-select: none;
+}
+.btn:hover{ box-shadow: var(--sh-1); }
+.btn:active{ transform: translateY(1px); }
+.btn:disabled{ opacity:.5; cursor:not-allowed; }
+
+.btn-primary{
+  background: var(--grad-brio); color: white; border-color: transparent;
+}
+.btn-primary:hover{ box-shadow: var(--sh-2); }
+
+.btn-ghost{ background: transparent; border-color: transparent; }
+.btn-ghost:hover{ background: var(--bg-soft); }
+
+.btn-danger{ background: var(--danger); color: white; border-color: transparent; }
+
+.btn-lg{ padding: 14px 22px; font-size: 16px; border-radius: var(--r-lg); }
+.btn-xl{ padding: 22px 32px; font-size: 20px; border-radius: var(--r-lg); }
+
+/* ============================================================
+   INPUTS
+   ============================================================ */
+.input, .select, .textarea{
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--bg-card);
+  color: var(--text);
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.input:focus, .select:focus, .textarea:focus{
+  border-color: var(--emerald);
+  box-shadow: 0 0 0 3px rgba(16,185,129,.18);
+}
+.textarea{ resize: vertical; min-height: 80px; }
+label.field{ display:block; margin-bottom: 12px; }
+label.field > .label{ display:block; font-size:13px; color: var(--text-muted); margin-bottom: 6px; font-weight: 500; }
+
+/* ============================================================
+   CARD
+   ============================================================ */
+.card{
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 20px;
+  box-shadow: var(--sh-1);
+}
+.card-pad-lg{ padding: 28px; }
+.card-flat{ box-shadow:none; }
+
+/* ============================================================
+   APP CHROME (header + sidebar)
+   ============================================================ */
+.app{
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh; min-height: 100dvh;
+}
+.app.no-sidebar{ grid-template-columns: 1fr; }
+
+.sidebar{
+  background: var(--onyx);
+  color: var(--champagne);
+  padding: 20px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+  position: sticky; top: 0; height: 100vh; height: 100dvh;
+}
+.sidebar .brand{
+  padding: 6px 8px 18px 8px;
+  border-bottom: 1px solid rgba(255,255,255,.08);
+  margin-bottom: 8px;
+}
+.sidebar .brand .brio-logo{ font-size: 28px; }
+.sidebar .nav-link{
+  display:flex; align-items:center; gap:10px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  color: rgba(239,230,213,.7);
+  font-size: 14px; font-weight: 500;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.sidebar .nav-link:hover{ background: rgba(255,255,255,.06); color: var(--champagne); }
+.sidebar .nav-link.active{ background: rgba(16,185,129,.18); color: var(--champagne); }
+.sidebar .nav-link .icon{ width:18px; text-align:center; }
+.sidebar .spacer{ flex: 1; }
+.sidebar .user-box{
+  padding: 12px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  font-size: 13px;
+  color: rgba(239,230,213,.7);
+}
+.sidebar .user-box .name{ color: var(--champagne); font-weight: 500; }
+.sidebar .user-box .role{ font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--emerald); margin-top: 2px; }
+
+main#appContent{
+  padding: 24px 28px 60px 28px;
+  min-width: 0;
+}
+
+/* Quando in modalità kiosk/full → no sidebar, full bleed */
+.app.no-sidebar main#appContent{ padding: 0; }
+
+/* ============================================================
+   PAGE HEADER
+   ============================================================ */
+.page-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom: 20px; gap: 16px; flex-wrap: wrap; }
+.page-header h1{ font-size: 22px; margin: 0; font-weight: 600; letter-spacing: -.01em; }
+.page-header .sub{ color: var(--text-muted); font-size: 13px; }
+
+/* ============================================================
+   GRID UTILS
+   ============================================================ */
+.grid{ display:grid; gap: 16px; }
+.grid-cards{ grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.grid-2{ grid-template-columns: repeat(2, 1fr); }
+.grid-3{ grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 720px){
+  .grid-2, .grid-3{ grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   LOGIN
+   ============================================================ */
+.login-screen{
+  min-height: 100vh; min-height: 100dvh;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+  padding: 24px;
+}
+.login-box{
+  width: 100%; max-width: 380px;
+  background: var(--bg-card);
+  border-radius: var(--r-xl);
+  padding: 32px 28px;
+  box-shadow: var(--sh-3);
+  border: 1px solid var(--line);
+}
+.login-box .brio-logo{ font-size: 44px; margin-bottom: 8px; }
+.login-box .tagline{ color: var(--text-muted); font-style: italic; font-size: 13px; margin-bottom: 24px; }
+.login-error{ background: rgba(220,38,38,.08); color: var(--danger); padding: 10px 12px; border-radius: var(--r-md); font-size: 13px; margin-bottom: 12px; }
+
+/* ============================================================
+   HOME — selettore modulo
+   ============================================================ */
+.module-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.module-card{
+  display:block;
+  padding: 24px;
+  border-radius: var(--r-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  transition: transform .12s ease, box-shadow .15s ease, border-color .15s ease;
+  cursor: pointer;
+}
+.module-card:hover{ transform: translateY(-2px); box-shadow: var(--sh-2); border-color: var(--line-strong); }
+.module-card .icon{ font-size: 32px; margin-bottom: 12px; }
+.module-card .title{ font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+.module-card .desc{ color: var(--text-muted); font-size: 13px; }
+
+/* ============================================================
+   TOAST
+   ============================================================ */
+#toastHost{
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 8px; z-index: 9000;
+  pointer-events: none;
+}
+.toast{
+  background: var(--onyx); color: var(--champagne);
+  padding: 12px 18px;
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-3);
+  font-size: 14px;
+  animation: toast-in .2s ease;
+  max-width: 480px;
+}
+.toast.success{ background: var(--emerald); color: white; }
+.toast.error{ background: var(--danger); color: white; }
+@keyframes toast-in{ from{ opacity:0; transform: translateY(8px); } to{ opacity:1; transform: translateY(0); } }
+
+/* ============================================================
+   UTILITY
+   ============================================================ */
+.flex{ display:flex; }
+.flex-1{ flex:1; }
+.gap-8{ gap:8px; }
+.gap-12{ gap:12px; }
+.gap-16{ gap:16px; }
+.items-center{ align-items:center; }
+.justify-between{ justify-content:space-between; }
+.text-center{ text-align:center; }
+.text-right{ text-align:right; }
+.muted{ color: var(--text-muted); }
+.dim{ color: var(--text-dim); }
+.mt-8{ margin-top: 8px; } .mt-16{ margin-top: 16px; } .mt-24{ margin-top: 24px; }
+.mb-8{ margin-bottom: 8px; } .mb-16{ margin-bottom: 16px; } .mb-24{ margin-bottom: 24px; }
+.hidden{ display:none !important; }
+
+/* ============================================================
+   RESPONSIVE — sidebar collassa su tablet < 900px
+   ============================================================ */
+@media (max-width: 900px){
+  .app{ grid-template-columns: 1fr; }
+  .sidebar{
+    position: fixed; top: 0; left: 0; right: 0; height: auto;
+    flex-direction: row; align-items: center;
+    padding: 10px 14px; gap: 8px;
+    overflow-x: auto;
+    z-index: 100;
+  }
+  .sidebar .brand{ border: none; padding: 0 8px 0 0; margin: 0; }
+  .sidebar .brand .brio-logo{ font-size: 22px; }
+  .sidebar .nav-link{ padding: 8px 10px; white-space: nowrap; }
+  .sidebar .nav-link .label{ display: none; }
+  .sidebar .nav-link .icon{ font-size: 18px; }
+  .sidebar .spacer{ flex: 1; }
+  .sidebar .user-box{ border: none; padding: 4px 8px; font-size: 11px; }
+  main#appContent{ padding: 70px 16px 32px 16px; }
+}
+</style>
+</head>
+
+<body>
+
+<!-- Splash iniziale, rimosso da app.js dopo il boot -->
+<div id="splash">
+  <div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>
+  <div class="tagline">Dal caffè al calice</div>
+</div>
+
+<!-- Container app — popolato da app.js -->
+<div id="appRoot"></div>
+
+<!-- Host per toast -->
+<div id="toastHost"></div>
+
+<!-- Registrazione service worker (deferred) -->
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch((e) => console.warn("[Brio] SW reg fallita", e));
+    });
+  }
+</script>
+
+</body>
+</html>
