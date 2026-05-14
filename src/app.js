@@ -113,9 +113,25 @@ function hideSplash(){
 // ============================================================
 // BOOT
 // ============================================================
+// Caso 1: supabase-init.js non ha ancora dispatchato → ascoltiamo l'evento.
+// Caso 2: i defer hanno già eseguito supabase-init.js prima di noi → l'evento
+//         è già passato. Verifichiamo se il client esiste e boottiamo direttamente.
 window.addEventListener("supabase-ready", boot);
+if (window.supabase && typeof window.supabase.auth === "object") {
+  boot();
+}
+
+// Failsafe: se entro 5s non si è bootato (es. CDN Supabase offline) mostra errore
+setTimeout(function(){
+  if (BRIO.ready) return;
+  err("Boot non avviato entro 5s. Supabase pronto?", !!(window.supabase && window.supabase.auth));
+  const s = document.getElementById("splash");
+  if (s) s.innerHTML = '<div style="text-align:center;padding:20px"><div style="font-size:48px;margin-bottom:12px">⚠️</div><h2 style="margin:0 0 8px">Impossibile avviare</h2><p style="color:rgba(10,9,7,.55);margin:0 0 16px">Controlla la connessione a internet e ricarica la pagina.</p><button onclick="location.reload()" style="padding:10px 20px;border-radius:10px;border:1px solid rgba(10,9,7,.14);background:white;cursor:pointer">Ricarica</button></div>';
+}, 5000);
 
 async function boot(){
+  if (BRIO.ready) return; // idempotente
+
   log("Boot");
   try {
     // 1. Recupera sessione esistente
@@ -311,7 +327,7 @@ function highlightActiveNav(routeName){
 // ============================================================
 function renderLoginPage(main){
   const lastEmail = localStorage.getItem(STORAGE_KEYS.AUTH) || "";
-  main.outerHTML = (
+  main.innerHTML = (
     '<div class="login-screen">' +
       '<div class="login-box">' +
         '<div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
