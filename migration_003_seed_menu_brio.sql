@@ -14,14 +14,15 @@
 -- ============================================================
 
 -- ============================================================
--- 0. Indici unique temporanei per ON CONFLICT
+-- 0. Cleanup eventuale esecuzione precedente fallita + indici unique
 -- ============================================================
-alter table public.products
-  add constraint products_org_sku_unique unique (org_id, sku) deferrable initially deferred;
--- ingredients per (org_id, name)
+-- Drop del constraint deferrable se rimasto dalla precedente run (era buggy)
+alter table public.products drop constraint if exists products_org_sku_unique;
+
+-- Unique index normali (NON deferrable) — necessari come arbitri ON CONFLICT
+create unique index if not exists ux_products_org_sku    on public.products(org_id, sku);
 create unique index if not exists ux_ingredients_org_name on public.ingredients(org_id, lower(name));
--- suppliers per (org_id, name)
-create unique index if not exists ux_suppliers_org_name on public.suppliers(org_id, lower(name));
+create unique index if not exists ux_suppliers_org_name   on public.suppliers(org_id, lower(name));
 
 -- ============================================================
 -- 1. CATEGORIE
