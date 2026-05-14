@@ -334,6 +334,167 @@ main#appContent{
 .hidden{ display:none !important; }
 
 /* ============================================================
+   CASSA
+   ============================================================ */
+.cassa-layout{
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 20px;
+  height: calc(100vh - 60px);
+  height: calc(100dvh - 60px);
+}
+.cassa-products{ overflow-y: auto; padding-right: 4px; }
+.cassa-tabs{ display:flex; gap:8px; margin-bottom: 16px; flex-wrap: wrap; }
+.cassa-tab{
+  padding: 10px 18px;
+  border-radius: 999px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  font-weight: 500; cursor: pointer; font-size: 14px;
+  transition: all .15s ease;
+  user-select: none;
+}
+.cassa-tab:hover{ border-color: var(--line-strong); }
+.cassa-tab.active{ background: var(--onyx); color: var(--champagne); border-color: var(--onyx); }
+.cassa-tab .count{ display:inline-block; margin-left:6px; opacity:.5; font-size: 12px; }
+
+.product-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+.product-tile{
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 14px 12px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+  transition: transform .08s ease, box-shadow .15s ease, border-color .15s ease;
+  min-height: 96px;
+  display: flex; flex-direction: column; justify-content: space-between;
+}
+.product-tile:hover{ box-shadow: var(--sh-2); border-color: var(--emerald); }
+.product-tile:active{ transform: scale(.97); }
+.product-tile .name{ font-weight: 600; font-size: 14px; line-height: 1.2; }
+.product-tile .price{ color: var(--emerald); font-weight: 600; margin-top: 8px; font-size: 14px; }
+.product-tile .shortcut{
+  position: absolute; top: 6px; right: 8px;
+  font-size: 11px; padding: 2px 6px;
+  background: var(--smoke); color: var(--text-muted);
+  border-radius: 4px; font-weight: 500;
+}
+.product-tile.unavailable{ opacity: .4; cursor: not-allowed; }
+.product-tile.unavailable .price::after{ content: " · esaurito"; color: var(--danger); font-weight: 400; font-size:12px; }
+
+/* Carrello */
+.cassa-cart{
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 16px;
+  display: flex; flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.cart-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; }
+.cart-head h3{ margin:0; font-size: 16px; font-weight: 600; }
+.cart-head .clear{ font-size: 12px; color: var(--text-muted); cursor: pointer; background: transparent; border: 0; padding: 4px 8px; }
+.cart-head .clear:hover{ color: var(--danger); }
+.cart-items{ flex: 1; overflow-y: auto; margin: 0 -4px; }
+.cart-empty{ text-align:center; padding: 40px 12px; color: var(--text-dim); }
+.cart-empty .icon{ font-size: 36px; margin-bottom: 8px; opacity: .4; }
+.cart-row{ display:grid; grid-template-columns: 1fr auto; gap: 8px; padding: 10px 4px; border-bottom: 1px solid var(--line); align-items: start; }
+.cart-row:last-child{ border-bottom: 0; }
+.cart-row .info{ font-size: 13px; }
+.cart-row .info .name{ font-weight: 500; line-height: 1.2; }
+.cart-row .info .unit{ color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.cart-row .qty-ctrl{ display:flex; align-items:center; gap:4px; }
+.cart-row .qty-btn{
+  width: 26px; height: 26px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg-soft);
+  display:flex; align-items:center; justify-content:center;
+  cursor: pointer; font-size: 14px; user-select: none;
+  padding: 0;
+}
+.cart-row .qty-btn:hover{ background: var(--smoke); }
+.cart-row .qty-btn.remove{ color: var(--danger); }
+.cart-row .qty{ min-width: 24px; text-align:center; font-weight: 600; font-size: 13px; }
+.cart-row .row-total{ font-weight: 600; font-size: 13px; min-width: 60px; text-align:right; margin-top:6px; }
+
+.cart-totals{ border-top: 2px solid var(--line-strong); padding-top: 12px; margin-top: 8px; }
+.cart-total-line{ display:flex; justify-content:space-between; font-size: 13px; padding: 4px 0; color: var(--text-muted); }
+.cart-total-line.grand{ color: var(--text); font-weight: 700; font-size: 18px; padding-top: 8px; }
+.cart-actions{ margin-top: 12px; display:flex; flex-direction: column; gap: 6px; }
+.cart-actions .btn{ width: 100%; padding: 14px; font-size: 15px; }
+
+@media (max-width: 900px){
+  .cassa-layout{ grid-template-columns: 1fr; height: auto; }
+  .cassa-cart{ height: auto; }
+}
+
+/* ============================================================
+   MODAL (per checkout)
+   ============================================================ */
+.modal-backdrop{
+  position: fixed; inset: 0;
+  background: rgba(10,9,7,.55);
+  z-index: 8000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  animation: fade-in .15s ease;
+}
+@keyframes fade-in{ from{opacity:0} to{opacity:1} }
+.modal{
+  background: var(--bg-card);
+  border-radius: var(--r-xl);
+  box-shadow: var(--sh-3);
+  width: 100%; max-width: 460px;
+  max-height: 90vh;
+  overflow: auto;
+  animation: modal-in .2s ease;
+}
+@keyframes modal-in{ from{ opacity:0; transform: translateY(8px) scale(.98); } to{opacity:1; transform: translateY(0) scale(1);} }
+.modal-head{ padding: 20px 24px; border-bottom: 1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+.modal-head h2{ margin:0; font-size: 18px; font-weight: 600; }
+.modal-close{ background: transparent; border:0; cursor:pointer; font-size: 22px; color: var(--text-muted); padding: 4px 8px; border-radius: 6px; }
+.modal-close:hover{ background: var(--bg-soft); color: var(--text); }
+.modal-body{ padding: 20px 24px; }
+.modal-foot{ padding: 16px 24px; border-top: 1px solid var(--line); display:flex; gap:8px; justify-content:flex-end; }
+
+/* Checkout */
+.pay-methods{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 16px; }
+.pay-method{
+  padding: 18px 14px; border-radius: var(--r-md); border: 2px solid var(--line);
+  background: var(--bg-card); cursor: pointer; text-align: center;
+  transition: all .15s ease;
+}
+.pay-method:hover{ border-color: var(--line-strong); }
+.pay-method.active{ border-color: var(--emerald); background: rgba(16,185,129,.06); }
+.pay-method .icon{ font-size: 26px; margin-bottom: 6px; }
+.pay-method .label{ font-weight: 600; font-size: 14px; }
+
+.cash-input{ margin-bottom: 12px; }
+.cash-input label{ display:block; font-size:12px; color: var(--text-muted); margin-bottom: 6px; }
+.cash-input input{ font-size: 28px; font-weight: 600; text-align: center; padding: 14px; }
+.cash-quick{ display:flex; gap:6px; flex-wrap: wrap; margin-top: 8px; }
+.cash-quick button{
+  flex: 1 1 auto; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg-soft); font-size: 13px; cursor: pointer;
+}
+.cash-quick button:hover{ background: var(--smoke); }
+.change-box{ background: var(--bg-soft); padding: 14px; border-radius: var(--r-md); display:flex; justify-content:space-between; align-items:center; }
+.change-box .label{ font-size:12px; color: var(--text-muted); }
+.change-box .value{ font-weight: 700; font-size: 22px; color: var(--emerald); }
+
+/* Receipt */
+.receipt-success{ text-align: center; padding: 8px 0 16px; }
+.receipt-success .icon{ font-size: 64px; margin-bottom: 8px; }
+.receipt-success .num{ font-size: 36px; font-weight: 700; color: var(--emerald); margin: 4px 0; }
+.receipt-success .hint{ color: var(--text-muted); font-size: 13px; }
+
+/* ============================================================
    RESPONSIVE — sidebar collassa su tablet < 900px
    ============================================================ */
 @media (max-width: 900px){

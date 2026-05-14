@@ -428,7 +428,7 @@ function placeholderPage(main, title, desc){
     '</div>';
 }
 
-function renderCassaPage(main){      placeholderPage(main, "Cassa", "Batti ordini, gestisci pagamenti, stampa scontrini fiscali."); }
+// renderCassaPage: vedi sezione CASSA in fondo al file
 function renderKioskPage(main){      placeholderPage(main, "Kiosk self-order", "Modalità auto-ordine per totem cliente."); }
 function renderKdsPage(main){        placeholderPage(main, "KDS retrobanco", "Schermo preparazione ordini in tempo reale."); }
 function renderDashboardPage(main){  placeholderPage(main, "Dashboard", "KPI del giorno, food cost, allarmi magazzino, performance."); }
@@ -467,4 +467,438 @@ function onDelegatedSubmit(e){
   const fn = window[handlerName];
   if (typeof fn === "function"){ fn(form, e); }
   else { err("Form handler non trovato:", handlerName); }
+}
+
+/* ============================================================
+ * MODULO CASSA
+ * ============================================================
+ * Funzionalità:
+ *  - Carica categorie + prodotti del menu
+ *  - Tab categorie + griglia prodotti (con shortcut F1-F12)
+ *  - Carrello laterale con +/- e totale
+ *  - Checkout: pagamento contanti (con calcolo resto) o carta
+ *  - INSERT order + order_items → trigger DB scarica magazzino
+ *  - Mostra scontrino digitale + numero ordine giornaliero
+ * ============================================================ */
+const CASSA = {
+  categories: [],
+  products: [],
+  productsByCat: {},
+  activeCatId: null,
+  cart: [],
+  paymentMethod: "cash",
+  cashGiven: 0,
+  saving: false,
+  shortcutMap: {},  // "F1" → product
+  realtimeChan: null,
+};
+
+async function renderCassaPage(main){
+  main.innerHTML =
+    '<div class="page-header">' +
+      '<h1>Cassa</h1>' +
+      '<div class="flex gap-8 items-center">' +
+        '<div class="sub muted" id="cassaSubinfo">Caricamento…</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="cassa-layout">' +
+      '<div class="cassa-products">' +
+        '<div class="cassa-tabs" id="cassaTabs"></div>' +
+        '<div class="product-grid" id="productGrid"></div>' +
+      '</div>' +
+      '<div class="cassa-cart" id="cassaCart"></div>' +
+    '</div>';
+
+  await cassaLoadData();
+  cassaRenderTabs();
+  cassaRenderProducts();
+  cassaRenderCart();
+  cassaAttachShortcuts();
+}
+
+async function cassaLoadData(){
+  // Carica categorie + prodotti + ingredienti delle ricette per check disponibilità
+  const orgId = BRIO.org.id;
+  const [catRes, prodRes] = await Promise.all([
+    supa().from("categories").select("*").eq("org_id", orgId).eq("visible", true).order("sort_order"),
+    supa().from("products")
+      .select("*, recipes(qty, ingredient:ingredients(id, name, stock_qty, critical_stock_qty))")
+      .eq("org_id", orgId)
+      .neq("status", "hidden")
+      .order("sort_order"),
+  ]);
+  if (catRes.error){ err("[cassa]", catRes.error); toast("Errore categorie", "error"); return; }
+  if (prodRes.error){ err("[cassa]", prodRes.error); toast("Errore prodotti", "error"); return; }
+
+  CASSA.categories = catRes.data || [];
+  CASSA.products = prodRes.data || [];
+  CASSA.productsByCat = {};
+  CASSA.shortcutMap = {};
+  CASSA.products.forEach((p) => {
+    if (!CASSA.productsByCat[p.category_id]) CASSA.productsByCat[p.category_id] = [];
+    CASSA.productsByCat[p.category_id].push(p);
+    if (p.shortcut_key) CASSA.shortcutMap[p.shortcut_key.toUpperCase()] = p;
+  });
+  CASSA.activeCatId = CASSA.categories.length > 0 ? CASSA.categories[0].id : null;
+  log("[cassa] caricati", CASSA.products.length, "prodotti in", CASSA.categories.length, "categorie");
+  const sub = document.getElementById("cassaSubinfo");
+  if (sub) sub.textContent = CASSA.products.length + " prodotti · " + CASSA.categories.length + " categorie";
+}
+
+function cassaRenderTabs(){
+  const host = document.getElementById("cassaTabs");
+  if (!host) return;
+  host.innerHTML = CASSA.categories.map((c) => {
+    const count = (CASSA.productsByCat[c.id] || []).length;
+    return '<div class="cassa-tab ' + (c.id === CASSA.activeCatId ? "active" : "") + '"' +
+      ' data-action="cassaSwitchCat" data-args=\'["' + c.id + '"]\'>' +
+      (c.icon ? c.icon + " " : "") + escapeHtml(c.name) +
+      '<span class="count">' + count + '</span></div>';
+  }).join("");
+}
+
+function cassaSwitchCat(catId){
+  CASSA.activeCatId = catId;
+  cassaRenderTabs();
+  cassaRenderProducts();
+}
+
+function cassaRenderProducts(){
+  const host = document.getElementById("productGrid");
+  if (!host) return;
+  const list = CASSA.productsByCat[CASSA.activeCatId] || [];
+  if (list.length === 0){
+    host.innerHTML = '<div class="muted" style="padding:40px;text-align:center;grid-column:1/-1">Nessun prodotto in questa categoria.</div>';
+    return;
+  }
+  host.innerHTML = list.map((p) => {
+    const unavail = !productAvailable(p);
+    return '<div class="product-tile ' + (unavail ? "unavailable" : "") + '"' +
+      ' data-action="' + (unavail ? "cassaUnavailable" : "cassaAddToCart") + '" data-args=\'["' + p.id + '"]\'>' +
+      (p.shortcut_key ? '<div class="shortcut">' + escapeHtml(p.shortcut_key) + '</div>' : "") +
+      '<div class="name">' + escapeHtml(p.name) + '</div>' +
+      '<div class="price">' + euroFmt(p.price_cents) + '</div>' +
+    '</div>';
+  }).join("");
+}
+
+// Un prodotto è disponibile se:
+//  - status === 'available' (no out_of_stock manuale)
+//  - tutti gli ingredienti della ricetta hanno stock_qty > critical_stock_qty
+//    (NB: il check critico è opzionale per MVP, possiamo allargare)
+function productAvailable(p){
+  if (p.status === "out_of_stock" || p.status === "hidden") return false;
+  if (!p.recipes || p.recipes.length === 0) return true; // prodotto senza ricetta: sempre disponibile
+  for (let i = 0; i < p.recipes.length; i++){
+    const r = p.recipes[i];
+    if (!r.ingredient) continue;
+    if (Number(r.ingredient.stock_qty) <= Number(r.ingredient.critical_stock_qty)) return false;
+  }
+  return true;
+}
+
+function cassaUnavailable(){ toast("Prodotto esaurito", "error"); }
+
+function cassaAddToCart(productId){
+  const p = CASSA.products.find((x) => x.id === productId);
+  if (!p) return;
+  const existing = CASSA.cart.find((c) => c.product_id === productId);
+  if (existing){
+    existing.qty += 1;
+  } else {
+    CASSA.cart.push({
+      product_id: p.id,
+      product_name: p.name,
+      unit_price_cents: p.price_cents,
+      vat_rate: p.vat_rate,
+      qty: 1,
+    });
+  }
+  cassaRenderCart();
+}
+
+function cassaIncQty(idx){ CASSA.cart[idx].qty += 1; cassaRenderCart(); }
+function cassaDecQty(idx){
+  CASSA.cart[idx].qty -= 1;
+  if (CASSA.cart[idx].qty <= 0) CASSA.cart.splice(idx, 1);
+  cassaRenderCart();
+}
+function cassaRemoveRow(idx){ CASSA.cart.splice(idx, 1); cassaRenderCart(); }
+function cassaClearCart(){
+  if (CASSA.cart.length === 0) return;
+  if (!confirm("Svuotare il carrello?")) return;
+  CASSA.cart = [];
+  cassaRenderCart();
+}
+
+function cassaCartTotals(){
+  let subtotal = 0;
+  let vat = 0;
+  for (const r of CASSA.cart){
+    const lineTotal = r.unit_price_cents * r.qty;
+    subtotal += lineTotal;
+    // IVA scorporata: lineTotal include IVA. vat = lineTotal - (lineTotal / (1 + rate/100))
+    vat += Math.round(lineTotal - (lineTotal / (1 + Number(r.vat_rate) / 100)));
+  }
+  return { subtotal, vat, total: subtotal };
+}
+
+function cassaRenderCart(){
+  const host = document.getElementById("cassaCart");
+  if (!host) return;
+
+  if (CASSA.cart.length === 0){
+    host.innerHTML =
+      '<div class="cart-head"><h3>Carrello</h3></div>' +
+      '<div class="cart-items"><div class="cart-empty"><div class="icon">🛒</div>Tocca un prodotto per iniziare</div></div>';
+    return;
+  }
+
+  const rows = CASSA.cart.map((r, idx) => {
+    const lineTotal = r.unit_price_cents * r.qty;
+    return '<div class="cart-row">' +
+      '<div class="info">' +
+        '<div class="name">' + escapeHtml(r.product_name) + '</div>' +
+        '<div class="unit">' + euroFmt(r.unit_price_cents) + ' · IVA ' + numFmt(r.vat_rate, 0) + '%</div>' +
+        '<div class="qty-ctrl mt-8">' +
+          '<button class="qty-btn" data-action="cassaDecQty" data-args="[' + idx + ']">−</button>' +
+          '<span class="qty">' + r.qty + '</span>' +
+          '<button class="qty-btn" data-action="cassaIncQty" data-args="[' + idx + ']">+</button>' +
+          '<button class="qty-btn remove" data-action="cassaRemoveRow" data-args="[' + idx + ']" title="Rimuovi">×</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="row-total">' + euroFmt(lineTotal) + '</div>' +
+    '</div>';
+  }).join("");
+
+  const t = cassaCartTotals();
+
+  host.innerHTML =
+    '<div class="cart-head">' +
+      '<h3>Carrello (' + CASSA.cart.reduce((a, r) => a + r.qty, 0) + ')</h3>' +
+      '<button class="clear" data-action="cassaClearCart">Svuota</button>' +
+    '</div>' +
+    '<div class="cart-items">' + rows + '</div>' +
+    '<div class="cart-totals">' +
+      '<div class="cart-total-line"><span>Imponibile</span><span>' + euroFmt(t.total - t.vat) + '</span></div>' +
+      '<div class="cart-total-line"><span>IVA</span><span>' + euroFmt(t.vat) + '</span></div>' +
+      '<div class="cart-total-line grand"><span>Totale</span><span>' + euroFmt(t.total) + '</span></div>' +
+    '</div>' +
+    '<div class="cart-actions">' +
+      '<button class="btn btn-primary btn-lg" data-action="cassaOpenCheckout">Paga ' + euroFmt(t.total) + '</button>' +
+    '</div>';
+}
+
+// ========================================================
+// CHECKOUT MODAL
+// ========================================================
+function cassaOpenCheckout(){
+  if (CASSA.cart.length === 0) return;
+  CASSA.paymentMethod = "cash";
+  CASSA.cashGiven = 0;
+  showCheckoutModal();
+}
+
+function showCheckoutModal(){
+  const t = cassaCartTotals();
+  const total = t.total;
+  // suggerimenti contanti: il totale arrotondato + multipli di 5/10/20
+  const ceilEuro = Math.ceil(total / 100) * 100;
+  const suggestions = [total, ceilEuro, 500 + ceilEuro - (ceilEuro % 500), 1000 + ceilEuro - (ceilEuro % 1000), 2000 + ceilEuro - (ceilEuro % 2000)]
+    .filter((v, i, a) => v >= total && a.indexOf(v) === i).slice(0, 5);
+
+  const change = Math.max(0, CASSA.cashGiven - total);
+  const canConfirm = CASSA.paymentMethod === "card" || CASSA.cashGiven >= total;
+
+  document.body.insertAdjacentHTML("beforeend",
+    '<div class="modal-backdrop" id="checkoutModal" data-action="cassaCloseCheckoutOnBackdrop">' +
+      '<div class="modal" onclick="event.stopPropagation()">' +
+        '<div class="modal-head">' +
+          '<h2>Pagamento · ' + euroFmt(total) + '</h2>' +
+          '<button class="modal-close" data-action="cassaCloseCheckout">×</button>' +
+        '</div>' +
+        '<div class="modal-body">' +
+          '<div class="pay-methods">' +
+            '<div class="pay-method ' + (CASSA.paymentMethod === "cash" ? "active" : "") + '" data-action="cassaSetPayment" data-args=\'["cash"]\'>' +
+              '<div class="icon">💵</div><div class="label">Contanti</div>' +
+            '</div>' +
+            '<div class="pay-method ' + (CASSA.paymentMethod === "card" ? "active" : "") + '" data-action="cassaSetPayment" data-args=\'["card"]\'>' +
+              '<div class="icon">💳</div><div class="label">Carta</div>' +
+            '</div>' +
+          '</div>' +
+          (CASSA.paymentMethod === "cash" ?
+            '<div class="cash-input">' +
+              '<label>Importo ricevuto</label>' +
+              '<input class="input" id="cashGivenInput" type="number" inputmode="decimal" step="0.01" min="0" placeholder="0,00" value="' + (CASSA.cashGiven > 0 ? (CASSA.cashGiven/100).toFixed(2) : "") + '" oninput="cassaOnCashChange(this.value)" />' +
+              '<div class="cash-quick">' +
+                suggestions.map((s) => '<button data-action="cassaQuickCash" data-args="[' + s + ']">' + euroFmt(s) + '</button>').join("") +
+              '</div>' +
+            '</div>' +
+            '<div class="change-box"><div><div class="label">Resto da dare</div><div class="value">' + euroFmt(change) + '</div></div></div>'
+            :
+            '<div class="muted" style="padding:20px;text-align:center;background:var(--bg-soft);border-radius:10px">Prepara il POS al cliente, poi conferma.</div>'
+          ) +
+        '</div>' +
+        '<div class="modal-foot">' +
+          '<button class="btn" data-action="cassaCloseCheckout">Annulla</button>' +
+          '<button class="btn btn-primary" ' + (canConfirm ? "" : "disabled") + ' data-action="cassaConfirmOrder">Conferma ordine</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function cassaCloseCheckout(){
+  const m = document.getElementById("checkoutModal");
+  if (m) m.remove();
+}
+function cassaCloseCheckoutOnBackdrop(){ /* solo se click fuori dal modal interno - già gestito da stopPropagation */ cassaCloseCheckout(); }
+
+function cassaSetPayment(method){
+  CASSA.paymentMethod = method;
+  cassaCloseCheckout();
+  showCheckoutModal();
+}
+
+function cassaOnCashChange(value){
+  const v = parseFloat((value || "0").toString().replace(",", ".")) || 0;
+  CASSA.cashGiven = Math.round(v * 100);
+  // ri-renderizziamo solo cambio + bottone abilitato
+  cassaCloseCheckout();
+  showCheckoutModal();
+  // riposiziona il focus
+  setTimeout(() => { const inp = document.getElementById("cashGivenInput"); if (inp){ inp.focus(); inp.select(); } }, 0);
+}
+
+function cassaQuickCash(cents){
+  CASSA.cashGiven = cents;
+  cassaCloseCheckout();
+  showCheckoutModal();
+}
+
+// ========================================================
+// CONFERMA ORDINE → INSERT su Supabase
+// ========================================================
+async function cassaConfirmOrder(){
+  if (CASSA.saving) return;
+  if (CASSA.cart.length === 0) return;
+  const t = cassaCartTotals();
+  if (CASSA.paymentMethod === "cash" && CASSA.cashGiven < t.total){
+    toast("Importo contanti insufficiente", "error"); return;
+  }
+
+  CASSA.saving = true;
+
+  const orgId = BRIO.org.id;
+  const change = CASSA.paymentMethod === "cash" ? Math.max(0, CASSA.cashGiven - t.total) : 0;
+
+  // 1) INSERT order
+  const orderPayload = {
+    org_id: orgId,
+    channel: "cassa",
+    status: "paid",
+    subtotal_cents: t.total,
+    total_cents: t.total,
+    vat_cents: t.vat,
+    payment_method: CASSA.paymentMethod,
+    paid_cash_cents: CASSA.paymentMethod === "cash" ? CASSA.cashGiven : 0,
+    paid_card_cents: CASSA.paymentMethod === "card" ? t.total : 0,
+    change_given_cents: change,
+    created_by: BRIO.user.id,
+  };
+  const { data: ord, error: ordErr } = await supa()
+    .from("orders").insert(orderPayload).select().single();
+
+  if (ordErr){
+    err("[cassa] insert order", ordErr);
+    toast("Errore salvataggio ordine: " + ordErr.message, "error");
+    CASSA.saving = false; return;
+  }
+
+  // 2) INSERT order_items in batch
+  const items = CASSA.cart.map((r) => ({
+    order_id: ord.id,
+    product_id: r.product_id,
+    product_name: r.product_name,
+    qty: r.qty,
+    unit_price_cents: r.unit_price_cents,
+    total_cents: r.unit_price_cents * r.qty,
+    vat_rate: r.vat_rate,
+    kds_status: "queued",
+  }));
+  const { error: itErr } = await supa().from("order_items").insert(items);
+  if (itErr){
+    err("[cassa] insert items", itErr);
+    toast("Errore voci ordine: " + itErr.message, "error");
+    // l'ordine è già salvato; lasciamo che sia review manuale
+    CASSA.saving = false; return;
+  }
+
+  // 3) INSERT transaction (registro cassa)
+  await supa().from("transactions").insert({
+    org_id: orgId,
+    order_id: ord.id,
+    type: "sale",
+    amount_cents: t.total,
+    method: CASSA.paymentMethod,
+    created_by: BRIO.user.id,
+  });
+
+  // 4) UI: chiudi modal pagamento, mostra modal successo
+  cassaCloseCheckout();
+  showReceiptModal(ord, change);
+
+  // 5) Svuota carrello + ricarica giacenze (i trigger DB hanno scalato)
+  CASSA.cart = [];
+  await cassaLoadData();
+  cassaRenderProducts();
+  cassaRenderCart();
+  CASSA.saving = false;
+}
+
+function showReceiptModal(order, change){
+  document.body.insertAdjacentHTML("beforeend",
+    '<div class="modal-backdrop" id="receiptModal" data-action="cassaCloseReceipt">' +
+      '<div class="modal" onclick="event.stopPropagation()">' +
+        '<div class="modal-body">' +
+          '<div class="receipt-success">' +
+            '<div class="icon">✅</div>' +
+            '<div class="muted" style="font-size:13px">Ordine</div>' +
+            '<div class="num">#' + order.daily_number + '</div>' +
+            '<div class="hint">Totale ' + euroFmt(order.total_cents) + ' · ' + (order.payment_method === "cash" ? "Contanti" : "Carta") + '</div>' +
+            (change > 0 ? '<div style="background:var(--bg-soft);padding:14px;border-radius:10px;margin-top:14px"><div class="muted" style="font-size:12px">Resto da dare</div><div style="font-size:28px;font-weight:700;color:var(--emerald)">' + euroFmt(change) + '</div></div>' : "") +
+            '<div class="hint mt-16" style="font-size:11px">Numero ordine giornaliero · ' + timeFmt(new Date()) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="modal-foot">' +
+          '<button class="btn btn-primary btn-lg" style="width:100%" data-action="cassaCloseReceipt">Nuovo ordine</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+function cassaCloseReceipt(){
+  const m = document.getElementById("receiptModal");
+  if (m) m.remove();
+}
+
+// ========================================================
+// SHORTCUT KEYBOARD F1-F12
+// ========================================================
+function cassaAttachShortcuts(){
+  // Rimuovi eventuale listener precedente (se navighi via)
+  if (window._cassaShortcutHandler){
+    document.removeEventListener("keydown", window._cassaShortcutHandler);
+  }
+  window._cassaShortcutHandler = function(e){
+    if (location.hash !== "#/cassa") return;
+    // Niente shortcut se siamo in un input/textarea
+    if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+    const key = e.key.toUpperCase(); // "F1"..."F12"
+    if (CASSA.shortcutMap[key]){
+      e.preventDefault();
+      cassaAddToCart(CASSA.shortcutMap[key].id);
+    }
+  };
+  document.addEventListener("keydown", window._cassaShortcutHandler);
 }
