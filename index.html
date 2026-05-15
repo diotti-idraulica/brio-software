@@ -243,6 +243,139 @@ main#appContent{
 .page-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom: 20px; gap: 16px; flex-wrap: wrap; }
 .page-header h1{ font-size: 22px; margin: 0; font-weight: 600; letter-spacing: -.01em; }
 .page-header .sub{ color: var(--text-muted); font-size: 13px; }
+.page-header .page-actions{ display:flex; gap:8px; align-items:center; flex-wrap: wrap; }
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+.kpi-grid{
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-bottom: 22px;
+}
+.kpi-card{
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 16px 18px;
+  box-shadow: var(--sh-1);
+  position: relative;
+}
+.kpi-card .kpi-label{ font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.kpi-card .kpi-value{ font-size: 26px; font-weight: 700; margin-top: 6px; letter-spacing: -.01em; color: var(--text); }
+.kpi-card .kpi-sub{ font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.kpi-card.kpi-warn{ background: linear-gradient(180deg, #FFFBEB 0%, var(--bg-card) 60%); border-color: rgba(245,158,11,.4); }
+.kpi-card.kpi-warn .kpi-value{ color: #B45309; }
+.kpi-card.kpi-soft{ background: linear-gradient(180deg, #FEFCE8 0%, var(--bg-card) 60%); }
+.kpi-card.kpi-good{ background: linear-gradient(180deg, rgba(16,185,129,.08) 0%, var(--bg-card) 60%); border-color: rgba(16,185,129,.25); }
+.kpi-card.kpi-good .kpi-value{ color: var(--emerald); }
+
+.dash-grid{ display:grid; gap: 16px; grid-template-columns: 2fr 1fr; margin-bottom: 22px; }
+@media (max-width: 920px){ .dash-grid{ grid-template-columns: 1fr; } }
+
+.dash-section{
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: 18px 20px;
+  box-shadow: var(--sh-1);
+  margin-bottom: 18px;
+}
+.dash-section h3{ font-size: 15px; margin: 0 0 12px; font-weight: 600; letter-spacing: -.01em; }
+.dash-section-head{ display:flex; align-items:center; justify-content:space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.dash-section-head h3{ margin: 0; }
+
+/* Grafico 30 giorni */
+.dash-chart .chart-svg{ height: 180px; display:block; }
+.dash-chart .chart-foot{ display:flex; justify-content:space-between; margin-top: 8px; font-size: 13px; }
+
+/* Heatmap orari (barre verticali) */
+.dash-hourly .bars-row{ display:flex; align-items:flex-end; gap: 6px; height: 180px; padding-top: 8px; }
+.dash-hourly .bar-col{ flex: 1; display:flex; flex-direction: column; align-items: center; height: 100%; justify-content: flex-end; min-width: 0; }
+.dash-hourly .bar{ width: 100%; min-height: 4px; background: linear-gradient(180deg, var(--emerald), rgba(16,185,129,.6)); border-radius: 4px 4px 0 0; transition: height .25s ease; }
+.dash-hourly .bar-hour{ font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+/* Top prodotti */
+.top-list{ display:flex; flex-direction: column; gap: 8px; }
+.top-row{
+  display: grid;
+  grid-template-columns: 22px 1fr auto 56px 90px;
+  gap: 10px; align-items: center;
+  padding: 6px 8px; border-radius: 6px;
+}
+.top-row:hover{ background: var(--bg-soft); }
+.top-row .rank{ color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.top-row .name{ font-weight: 500; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-row .bar-wrap{ position: relative; min-width: 40px; height: 6px; background: var(--bg-soft); border-radius: 999px; overflow: hidden; }
+.top-row .bar-wrap .bar{ position: absolute; left: 0; top: 0; bottom: 0; background: var(--emerald); border-radius: 999px; }
+.top-row .qty{ font-size: 13px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.top-row .rev{ font-size: 13px; font-weight: 600; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+@media (max-width: 720px){
+  .top-row{ grid-template-columns: 22px 1fr 48px 80px; }
+  .top-row .bar-wrap{ display: none; }
+}
+
+/* Allarmi magazzino */
+.alarms-list{ display:flex; flex-direction: column; gap: 6px; }
+.alarm-row{
+  display:grid; grid-template-columns: 14px 1fr auto auto; gap: 12px;
+  align-items: center; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px;
+  font-size: 14px;
+}
+.alarm-row .dot{ width: 10px; height: 10px; border-radius: 50%; background: var(--warning); }
+.alarm-row.alarm-crit .dot{ background: var(--danger); }
+.alarm-row.alarm-crit{ border-color: rgba(220,38,38,.3); background: #FEF2F2; }
+.alarm-row.alarm-warn{ border-color: rgba(245,158,11,.3); background: #FFFBEB; }
+.alarm-row .al-name{ font-weight: 500; }
+.alarm-row .al-stock{ font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
+.alarm-row .al-thr{ font-size: 12px; color: var(--text-muted); }
+
+/* ============================================================
+   CHIUSURA CASSA
+   ============================================================ */
+.chiusura-locked{
+  background: #ECFDF5; border: 1px solid rgba(16,185,129,.35);
+  color: #065F46; border-radius: var(--r-md);
+  padding: 12px 16px; margin-bottom: 16px;
+  font-size: 14px; font-weight: 500;
+}
+.chiusura-grid{ display:grid; gap: 16px; grid-template-columns: 1.4fr 1fr; }
+@media (max-width: 960px){ .chiusura-grid{ grid-template-columns: 1fr; } }
+
+.ch-stats{
+  display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.ch-stat{
+  background: var(--bg-soft);
+  border-radius: var(--r-md);
+  padding: 10px 12px;
+}
+.ch-stat .lab{ font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; }
+.ch-stat .val{ font-size: 18px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.ch-stat.warn{ background: #FFFBEB; }
+.ch-stat.warn .val{ color: #B45309; }
+
+.ch-table{ display:flex; flex-direction: column; gap: 6px; }
+.ch-row{
+  display:grid; grid-template-columns: 1fr 110px 150px 130px;
+  align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 8px;
+  font-size: 14px;
+}
+.ch-row.ch-head{ font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; padding: 6px 10px; }
+.ch-row.ch-total{ border-top: 1px solid var(--line); padding-top: 12px; font-weight: 600; font-size: 15px; }
+.ch-row .ch-input{ padding: 8px 10px; font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; }
+.ch-row .diff-ok{ color: var(--text-muted); }
+.ch-row .diff-pos{ color: var(--emerald); font-weight: 600; }
+.ch-row .diff-neg{ color: var(--danger); font-weight: 600; }
+@media (max-width: 720px){
+  .ch-row{ grid-template-columns: 1fr 90px 110px 100px; gap: 6px; font-size: 13px; }
+}
+
+.ch-actions{ display:flex; gap: 16px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+.ch-actions .muted{ font-size: 12px; max-width: 360px; }
 
 /* ============================================================
    GRID UTILS

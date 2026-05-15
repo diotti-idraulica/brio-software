@@ -671,10 +671,10 @@ function placeholderPage(main, title, desc){
 // renderCassaPage: vedi sezione CASSA in fondo al file
 // renderKioskPage: vedi sezione KIOSK in fondo al file
 // renderKdsPage: vedi sezione KDS in fondo al file
-function renderDashboardPage(main){  placeholderPage(main, "Dashboard", "KPI del giorno, food cost, allarmi magazzino, performance."); }
+// renderDashboardPage: vedi sezione DASHBOARD in fondo al file
 // renderMagazzinoPage: vedi sezione MAGAZZINO in fondo al file
 function renderFornitoriPage(main){  placeholderPage(main, "Fornitori", "Anagrafica, ordini automatici via email, ricezione merce."); }
-function renderChiusuraPage(main){   placeholderPage(main, "Chiusura cassa", "Riconciliazione incassi atteso vs reale, export corrispettivi."); }
+// renderChiusuraPage: vedi sezione CHIUSURA CASSA in fondo al file
 function renderMenuClientePage(main){placeholderPage(main, "Menu cliente", "Pagina pubblica menu — accessibile da QR tavolo o link."); }
 
 // ============================================================
@@ -3330,3 +3330,600 @@ function cassaAttachShortcuts(){
   document.addEventListener("keydown", window._cassaShortcutHandler);
 }
 
+// ============================================================
+// DASHBOARD GIORNALIERA · KPI vendite, food cost, allarmi
+// ============================================================
+const DASH = {
+  loading: false,
+  today: null,         // riga daily_revenue di oggi
+  yesterday: null,     // riga daily_revenue di ieri
+  weekAvg: 0,          // media giornaliera ultimi 7 giorni
+  cogsToday: 0,        // costo materie prime oggi (centesimi)
+  cogsMonth: 0,        // food cost % mese corrente
+  revenueMonth: 0,
+  topProducts: [],
+  hourly: [],          // [{hour,orders_count,revenue_cents}, ...]
+  last30: [],          // [{day,revenue_cents,orders_count}, ...]
+  lowStock: [],        // ingredienti sotto soglia minima
+  refreshTimer: null,
+};
+
+async function renderDashboardPage(main){
+  main.innerHTML =
+    '<div class="page-header">' +
+      '<div><h1>Dashboard</h1><div class="sub" id="dashSub">' + dateFmt(new Date()) + '</div></div>' +
+      '<div class="page-actions"><button class="btn" data-action="dashRefresh">⟲ Aggiorna</button></div>' +
+    '</div>' +
+    '<div id="dashBody"><div class="muted" style="padding:24px">Carico dati…</div></div>';
+  await dashLoad();
+  dashRender();
+  // Auto-refresh ogni 60s mentre la pagina è aperta
+  if (DASH.refreshTimer) clearInterval(DASH.refreshTimer);
+  DASH.refreshTimer = setInterval(() => {
+    if (location.hash === "#/dashboard") dashLoad().then(dashRender);
+    else { clearInterval(DASH.refreshTimer); DASH.refreshTimer = null; }
+  }, 60000);
+}
+
+async function dashRefresh(){
+  await dashLoad();
+  dashRender();
+  toast("Dashboard aggiornata", "success");
+}
+
+async function dashLoad(){
+  if (!BRIO.org) return;
+  DASH.loading = true;
+  const orgId = BRIO.org.id;
+  const today = new Date();
+  const todayStr = localDateStr(today);
+  const yesterday = new Date(today.getTime() - 86400000);
+  const yesterdayStr = localDateStr(yesterday);
+  const weekAgo = new Date(today.getTime() - 7 * 86400000);
+  const weekAgoStr = localDateStr(weekAgo);
+  const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  const monthStartStr = localDateStr(monthStart);
+
+  try {
+    const [
+      revTodayRes,
+      revYestRes,
+      revWeekRes,
+      cogsTodayRes,
+      cogsMonthRes,
+      revMonthRes,
+      topRes,
+      hourRes,
+      last30Res,
+      lowStockRes,
+    ] = await Promise.all([
+      supa().from("daily_revenue").select("*").eq("org_id", orgId).eq("daily_date", todayStr).maybeSingle(),
+      supa().from("daily_revenue").select("*").eq("org_id", orgId).eq("daily_date", yesterdayStr).maybeSingle(),
+      supa().from("daily_revenue").select("revenue_cents,orders_count").eq("org_id", orgId).gte("daily_date", weekAgoStr).lt("daily_date", todayStr),
+      supa().from("daily_cogs").select("cogs_cents").eq("org_id", orgId).eq("cogs_date", todayStr).maybeSingle(),
+      supa().from("daily_cogs").select("cogs_cents").eq("org_id", orgId).gte("cogs_date", monthStartStr),
+      supa().from("daily_revenue").select("revenue_cents").eq("org_id", orgId).gte("daily_date", monthStartStr),
+      supa().rpc("top_products_window", { p_org_id: orgId, p_days: 7, p_limit: 10 }),
+      supa().rpc("hourly_revenue_today", { p_org_id: orgId }),
+      supa().rpc("revenue_last_30days", { p_org_id: orgId }),
+      supa().from("ingredients").select("id,name,unit,stock_qty,min_stock_qty,critical_stock_qty").eq("org_id", orgId).eq("active", true).order("name"),
+    ]);
+
+    DASH.today = revTodayRes.data || { revenue_cents: 0, orders_count: 0, avg_ticket_cents: 0 };
+    DASH.yesterday = revYestRes.data || null;
+
+    const weekRows = revWeekRes.data || [];
+    const weekTot = weekRows.reduce((a, r) => a + Number(r.revenue_cents || 0), 0);
+    DASH.weekAvg = weekRows.length > 0 ? Math.round(weekTot / weekRows.length) : 0;
+
+    DASH.cogsToday = Number(cogsTodayRes.data ? cogsTodayRes.data.cogs_cents : 0);
+    DASH.cogsMonth = (cogsMonthRes.data || []).reduce((a, r) => a + Number(r.cogs_cents || 0), 0);
+    DASH.revenueMonth = (revMonthRes.data || []).reduce((a, r) => a + Number(r.revenue_cents || 0), 0);
+
+    DASH.topProducts = topRes.data || [];
+    DASH.hourly = hourRes.data || [];
+    DASH.last30 = last30Res.data || [];
+
+    const allIng = lowStockRes.data || [];
+    DASH.lowStock = allIng.filter((i) => Number(i.stock_qty) <= Number(i.min_stock_qty));
+  } catch (e){
+    err("[dashboard] load", e);
+    toast("Errore caricamento dashboard: " + (e.message || e), "error");
+  }
+  DASH.loading = false;
+}
+
+function dashRender(){
+  const body = document.getElementById("dashBody");
+  if (!body) return;
+  const t = DASH.today || {};
+  const y = DASH.yesterday;
+  const revToday = Number(t.revenue_cents || 0);
+  const orders = Number(t.orders_count || 0);
+  const avgTicket = Number(t.avg_ticket_cents || 0);
+
+  // Margine stimato = revenue - cogs (approssimazione semplice)
+  const marginToday = revToday - DASH.cogsToday;
+  // Food cost % oggi
+  const foodCostPctToday = revToday > 0 ? (DASH.cogsToday / revToday) * 100 : 0;
+  // Food cost % mese
+  const foodCostPctMonth = DASH.revenueMonth > 0 ? (DASH.cogsMonth / DASH.revenueMonth) * 100 : 0;
+
+  // Confronti
+  const diffYesterday = y ? revToday - Number(y.revenue_cents || 0) : null;
+  const diffWeekAvg = revToday - DASH.weekAvg;
+
+  body.innerHTML =
+    dashKpiBlock(revToday, orders, avgTicket, marginToday, foodCostPctToday, diffYesterday, diffWeekAvg, foodCostPctMonth) +
+    dashAlarmsBlock() +
+    '<div class="dash-grid">' +
+      dashChart30Block() +
+      dashHourlyBlock() +
+    '</div>' +
+    dashTopProductsBlock();
+}
+
+function dashKpiBlock(revToday, orders, avgTicket, marginToday, foodCostPctToday, diffYesterday, diffWeekAvg, foodCostPctMonth){
+  return (
+    '<div class="kpi-grid">' +
+      kpiCard("Fatturato oggi", euroFmt(revToday), diffWeekAvg != null ? trendLabel(diffWeekAvg, "vs media settimana") : "") +
+      kpiCard("Clienti oggi", numFmt(orders, 0), diffYesterday != null ? "ieri " + numFmt(Number((DASH.yesterday||{}).orders_count||0), 0) : "") +
+      kpiCard("Ticket medio", euroFmt(avgTicket), orders > 0 ? "su " + orders + " ordini" : "") +
+      kpiCard("Margine stimato", euroFmt(marginToday), foodCostPctToday > 0 ? "food cost " + numFmt(foodCostPctToday, 1) + "%" : "", foodCostPctToday > 31 ? "warn" : "") +
+      kpiCard("Food cost mese", numFmt(foodCostPctMonth, 1) + "%", "target ≤ 29%", foodCostPctMonth > 31 ? "warn" : (foodCostPctMonth > 29 ? "soft" : "good")) +
+      kpiCard("Magazzino critico", DASH.lowStock.length, DASH.lowStock.length > 0 ? "ingredienti sotto soglia" : "tutto OK", DASH.lowStock.length > 0 ? "warn" : "good") +
+    '</div>'
+  );
+}
+
+function kpiCard(label, value, sub, tone){
+  return (
+    '<div class="kpi-card' + (tone ? " kpi-" + tone : "") + '">' +
+      '<div class="kpi-label">' + escapeHtml(label) + '</div>' +
+      '<div class="kpi-value">' + escapeHtml(String(value)) + '</div>' +
+      (sub ? '<div class="kpi-sub">' + escapeHtml(sub) + '</div>' : "") +
+    '</div>'
+  );
+}
+
+function trendLabel(delta, suffix){
+  if (delta === 0 || delta == null) return "= " + (suffix || "");
+  const sign = delta > 0 ? "↑" : "↓";
+  return sign + " " + euroFmt(Math.abs(delta)) + " " + (suffix || "");
+}
+
+function dashAlarmsBlock(){
+  if (DASH.lowStock.length === 0) return "";
+  const rows = DASH.lowStock.slice(0, 8).map((i) => {
+    const isCrit = Number(i.stock_qty) <= Number(i.critical_stock_qty);
+    return '<div class="alarm-row ' + (isCrit ? "alarm-crit" : "alarm-warn") + '">' +
+      '<span class="dot"></span>' +
+      '<span class="al-name">' + escapeHtml(i.name) + '</span>' +
+      '<span class="al-stock">' + numFmt(i.stock_qty, 0) + ' ' + escapeHtml(i.unit) + '</span>' +
+      '<span class="al-thr">soglia ' + numFmt(i.min_stock_qty, 0) + '</span>' +
+    '</div>';
+  }).join("");
+  return (
+    '<div class="dash-section">' +
+      '<div class="dash-section-head">' +
+        '<h3>⚠️ Magazzino · ingredienti da riordinare</h3>' +
+        (DASH.lowStock.length > 8 ? '<span class="muted">+ ' + (DASH.lowStock.length - 8) + ' altri</span>' : "") +
+        '<button class="btn btn-ghost" data-action="navigate" data-args=\'["#/magazzino"]\'>Vai al magazzino →</button>' +
+      '</div>' +
+      '<div class="alarms-list">' + rows + '</div>' +
+    '</div>'
+  );
+}
+
+function dashChart30Block(){
+  const data = DASH.last30 || [];
+  if (data.length === 0) return '<div class="dash-section"><h3>Fatturato ultimi 30 giorni</h3><div class="muted">Nessun dato.</div></div>';
+
+  const w = 720, h = 200, pad = 24;
+  const max = Math.max.apply(null, data.map((d) => Number(d.revenue_cents || 0)).concat([1]));
+  const stepX = (w - pad * 2) / Math.max(1, (data.length - 1));
+  const points = data.map((d, idx) => {
+    const x = pad + idx * stepX;
+    const y = h - pad - ((Number(d.revenue_cents || 0) / max) * (h - pad * 2));
+    return { x, y, d };
+  });
+  const path = points.map((p, i) => (i === 0 ? "M" : "L") + p.x.toFixed(1) + "," + p.y.toFixed(1)).join(" ");
+  const area = path + " L" + points[points.length - 1].x.toFixed(1) + "," + (h - pad) + " L" + points[0].x.toFixed(1) + "," + (h - pad) + " Z";
+  const todayRev = points.length > 0 ? Number(points[points.length - 1].d.revenue_cents || 0) : 0;
+  const max7 = Math.max.apply(null, data.slice(-7).map((d) => Number(d.revenue_cents || 0)).concat([1]));
+
+  return (
+    '<div class="dash-section dash-chart">' +
+      '<div class="dash-section-head"><h3>Fatturato ultimi 30 giorni</h3><span class="muted">max ' + euroFmt(max) + '</span></div>' +
+      '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" preserveAspectRatio="none" class="chart-svg">' +
+        '<defs><linearGradient id="dashGrad" x1="0" y1="0" x2="0" y2="1">' +
+          '<stop offset="0%" stop-color="#10B981" stop-opacity=".35"/>' +
+          '<stop offset="100%" stop-color="#10B981" stop-opacity="0"/>' +
+        '</linearGradient></defs>' +
+        '<path d="' + area + '" fill="url(#dashGrad)"/>' +
+        '<path d="' + path + '" stroke="#10B981" stroke-width="2.5" fill="none" stroke-linejoin="round"/>' +
+        points.map((p) => '<circle cx="' + p.x.toFixed(1) + '" cy="' + p.y.toFixed(1) + '" r="2.5" fill="#10B981"></circle>').join("") +
+      '</svg>' +
+      '<div class="chart-foot">' +
+        '<span>oggi <strong>' + euroFmt(todayRev) + '</strong></span>' +
+        '<span class="muted">picco 7gg ' + euroFmt(max7) + '</span>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function dashHourlyBlock(){
+  const data = DASH.hourly || [];
+  // Mostriamo solo orari del bar (7-21)
+  const slice = data.filter((d) => d.hour >= 7 && d.hour <= 21);
+  if (slice.length === 0) return '<div class="dash-section"><h3>Vendite per ora · oggi</h3><div class="muted">Nessun ordine ancora oggi.</div></div>';
+  const max = Math.max.apply(null, slice.map((d) => Number(d.revenue_cents || 0)).concat([1]));
+  const bars = slice.map((d) => {
+    const pct = (Number(d.revenue_cents || 0) / max) * 100;
+    return '<div class="bar-col">' +
+      '<div class="bar" style="height:' + pct.toFixed(1) + '%"></div>' +
+      '<div class="bar-hour">' + d.hour + '</div>' +
+    '</div>';
+  }).join("");
+  return (
+    '<div class="dash-section dash-hourly">' +
+      '<div class="dash-section-head"><h3>Vendite per ora · oggi</h3></div>' +
+      '<div class="bars-row">' + bars + '</div>' +
+    '</div>'
+  );
+}
+
+function dashTopProductsBlock(){
+  const list = DASH.topProducts || [];
+  if (list.length === 0) return '<div class="dash-section"><h3>Top 10 prodotti · ultimi 7 giorni</h3><div class="muted">Nessun ordine.</div></div>';
+  const max = Math.max.apply(null, list.map((p) => Number(p.qty_sold || 0)).concat([1]));
+  const rows = list.map((p, idx) => {
+    const pct = (Number(p.qty_sold || 0) / max) * 100;
+    return '<div class="top-row">' +
+      '<span class="rank">' + (idx + 1) + '</span>' +
+      '<span class="name">' + escapeHtml(p.product_name) + '</span>' +
+      '<span class="bar-wrap"><span class="bar" style="width:' + pct.toFixed(1) + '%"></span></span>' +
+      '<span class="qty">' + numFmt(p.qty_sold, 0) + '×</span>' +
+      '<span class="rev">' + euroFmt(p.revenue_cents) + '</span>' +
+    '</div>';
+  }).join("");
+  return (
+    '<div class="dash-section">' +
+      '<div class="dash-section-head"><h3>Top 10 prodotti · ultimi 7 giorni</h3></div>' +
+      '<div class="top-list">' + rows + '</div>' +
+    '</div>'
+  );
+}
+
+// Helper data locale ISO (Europe/Rome). Non usiamo toISOString che è UTC.
+function localDateStr(date){
+  const d = date || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return y + "-" + m + "-" + day;
+}
+
+// ============================================================
+// CHIUSURA CASSA · riconciliazione + export corrispettivi
+// ============================================================
+const CHIUSURA = {
+  date: null,          // YYYY-MM-DD
+  loading: false,
+  expected: null,      // riga daily_cash_expected
+  existing: null,      // riga daily_close se già chiusa
+  cogsToday: 0,
+  topToday: [],
+  counted: { cash: "", card: "", voucher: "" },
+  notes: "",
+  saving: false,
+};
+
+async function renderChiusuraPage(main){
+  CHIUSURA.date = CHIUSURA.date || localDateStr(new Date());
+  main.innerHTML =
+    '<div class="page-header">' +
+      '<div><h1>Chiusura cassa</h1><div class="sub" id="chiusuraSub">' + dateFmt(new Date(CHIUSURA.date)) + '</div></div>' +
+      '<div class="page-actions">' +
+        '<input type="date" class="input" style="width:auto;display:inline-block" id="chiusuraDate" value="' + CHIUSURA.date + '" data-action="chiusuraDateChanged" />' +
+        '<button class="btn" data-action="chiusuraExportCsv">📥 Esporta corrispettivi</button>' +
+      '</div>' +
+    '</div>' +
+    '<div id="chiusuraBody"><div class="muted" style="padding:24px">Carico…</div></div>';
+  await chiusuraLoad();
+  chiusuraRender();
+  // Wire input date dopo render iniziale
+  const dateInput = document.getElementById("chiusuraDate");
+  if (dateInput) dateInput.addEventListener("change", (e) => {
+    CHIUSURA.date = e.target.value;
+    chiusuraLoad().then(chiusuraRender);
+    const sub = document.getElementById("chiusuraSub");
+    if (sub) sub.textContent = dateFmt(new Date(CHIUSURA.date));
+  });
+}
+
+async function chiusuraLoad(){
+  if (!BRIO.org) return;
+  CHIUSURA.loading = true;
+  const orgId = BRIO.org.id;
+  const date = CHIUSURA.date;
+
+  try {
+    const [expRes, closeRes, cogsRes, topRes] = await Promise.all([
+      supa().from("daily_cash_expected").select("*").eq("org_id", orgId).eq("daily_date", date).maybeSingle(),
+      supa().from("daily_close").select("*").eq("org_id", orgId).eq("close_date", date).maybeSingle(),
+      supa().from("daily_cogs").select("cogs_cents").eq("org_id", orgId).eq("cogs_date", date).maybeSingle(),
+      supa().from("order_items").select("product_name, qty, total_cents, orders!inner(org_id, daily_date, status)")
+        .eq("orders.org_id", orgId).eq("orders.daily_date", date)
+        .in("orders.status", ["paid","preparing","ready","delivered"]),
+    ]);
+
+    CHIUSURA.expected = expRes.data || { cash_cents: 0, card_cents: 0, voucher_cents: 0, total_cents: 0, orders_count: 0, change_given_cents: 0 };
+    CHIUSURA.existing = closeRes.data || null;
+    CHIUSURA.cogsToday = Number(cogsRes.data ? cogsRes.data.cogs_cents : 0);
+
+    // Aggrega prodotti venduti per il giorno
+    const agg = {};
+    (topRes.data || []).forEach((it) => {
+      if (!agg[it.product_name]) agg[it.product_name] = { qty: 0, rev: 0 };
+      agg[it.product_name].qty += Number(it.qty || 0);
+      agg[it.product_name].rev += Number(it.total_cents || 0);
+    });
+    CHIUSURA.topToday = Object.keys(agg).map((n) => ({ name: n, qty: agg[n].qty, rev: agg[n].rev }))
+      .sort((a, b) => b.qty - a.qty);
+
+    // Se chiusura già fatta, precompila i campi contati
+    if (CHIUSURA.existing){
+      CHIUSURA.counted = {
+        cash:    centsToInputStr(CHIUSURA.existing.counted_cash_cents),
+        card:    centsToInputStr(CHIUSURA.existing.counted_card_cents),
+        voucher: centsToInputStr(CHIUSURA.existing.counted_voucher_cents),
+      };
+      CHIUSURA.notes = CHIUSURA.existing.notes || "";
+    }
+  } catch (e){
+    err("[chiusura] load", e);
+    toast("Errore caricamento chiusura: " + (e.message || e), "error");
+  }
+  CHIUSURA.loading = false;
+}
+
+function centsToInputStr(c){
+  const v = Number(c || 0) / 100;
+  return v > 0 ? v.toFixed(2).replace(".", ",") : "";
+}
+function parseEuroInput(s){
+  if (!s) return 0;
+  const cleaned = String(s).replace(/\./g, "").replace(",", ".").replace(/[^0-9.\-]/g, "");
+  const v = parseFloat(cleaned);
+  return isNaN(v) ? 0 : Math.round(v * 100);
+}
+
+function chiusuraRender(){
+  const body = document.getElementById("chiusuraBody");
+  if (!body) return;
+  const exp = CHIUSURA.expected;
+  const closed = !!CHIUSURA.existing;
+  const isToday = CHIUSURA.date === localDateStr(new Date());
+
+  const countedCash = parseEuroInput(CHIUSURA.counted.cash);
+  const countedCard = parseEuroInput(CHIUSURA.counted.card);
+  const countedVoucher = parseEuroInput(CHIUSURA.counted.voucher);
+  const diffCash = countedCash - Number(exp.cash_cents || 0);
+  const diffCard = countedCard - Number(exp.card_cents || 0);
+  const diffVoucher = countedVoucher - Number(exp.voucher_cents || 0);
+  const countedTotal = countedCash + countedCard + countedVoucher;
+  const expectedTotal = Number(exp.total_cents || 0);
+  const margin = expectedTotal - CHIUSURA.cogsToday;
+  const foodCostPct = expectedTotal > 0 ? (CHIUSURA.cogsToday / expectedTotal) * 100 : 0;
+
+  body.innerHTML =
+    (closed ? '<div class="chiusura-locked">🔒 Chiusura già salvata il ' + (CHIUSURA.existing.closed_at ? dateFmt(CHIUSURA.existing.closed_at) + " " + timeFmt(CHIUSURA.existing.closed_at) : dateFmt(CHIUSURA.existing.close_date)) + '. Puoi rivedere ma non modificare.</div>' : "") +
+    '<div class="chiusura-grid">' +
+      // Colonna sinistra: atteso + form contati
+      '<div>' +
+        '<div class="dash-section">' +
+          '<h3>Riepilogo del giorno</h3>' +
+          '<div class="ch-stats">' +
+            chStat("Ordini", numFmt(Number(exp.orders_count || 0), 0)) +
+            chStat("Fatturato", euroFmt(expectedTotal)) +
+            chStat("Costo materie", euroFmt(CHIUSURA.cogsToday)) +
+            chStat("Margine", euroFmt(margin), foodCostPct > 31 ? "warn" : "") +
+            chStat("Food cost", numFmt(foodCostPct, 1) + "%", foodCostPct > 31 ? "warn" : "") +
+            chStat("Resto dato", euroFmt(Number(exp.change_given_cents || 0))) +
+          '</div>' +
+        '</div>' +
+
+        '<div class="dash-section">' +
+          '<h3>Riconciliazione cassa</h3>' +
+          '<div class="ch-table">' +
+            '<div class="ch-row ch-head"><div>Metodo</div><div>Atteso</div><div>Contato</div><div>Differenza</div></div>' +
+            chRecRow("Contanti", exp.cash_cents, CHIUSURA.counted.cash, "cash", diffCash, closed) +
+            chRecRow("Carta",    exp.card_cents, CHIUSURA.counted.card, "card", diffCard, closed) +
+            chRecRow("Buoni",    exp.voucher_cents, CHIUSURA.counted.voucher, "voucher", diffVoucher, closed) +
+            '<div class="ch-row ch-total">' +
+              '<div>Totale</div>' +
+              '<div>' + euroFmt(expectedTotal) + '</div>' +
+              '<div>' + euroFmt(countedTotal) + '</div>' +
+              '<div class="' + (countedTotal === expectedTotal ? "diff-ok" : (countedTotal - expectedTotal >= 0 ? "diff-pos" : "diff-neg")) + '">' + diffLabel(countedTotal - expectedTotal) + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>' +
+
+        '<div class="dash-section">' +
+          '<h3>Note</h3>' +
+          '<textarea class="textarea" id="chiusuraNotes" placeholder="Eventuali note: cassa fondo, sconti, anomalie…"' + (closed ? " disabled" : "") + '>' + escapeHtml(CHIUSURA.notes) + '</textarea>' +
+        '</div>' +
+
+        (!closed && isToday ? (
+          '<div class="ch-actions">' +
+            '<button class="btn btn-primary btn-lg" data-action="chiusuraSave">🔒 Chiudi giornata</button>' +
+            '<span class="muted">L\'azione registra i totali contati. Successivamente la chiusura può essere solo consultata.</span>' +
+          '</div>'
+        ) : "") +
+
+        (!isToday && !closed ? '<div class="muted" style="margin-top:16px">Questo giorno non è ancora stato chiuso. Puoi chiudere solo la giornata corrente.</div>' : "") +
+      '</div>' +
+
+      // Colonna destra: top prodotti del giorno
+      '<div>' +
+        '<div class="dash-section">' +
+          '<h3>Top prodotti del giorno</h3>' +
+          (CHIUSURA.topToday.length === 0
+            ? '<div class="muted">Nessun ordine in questa giornata.</div>'
+            : '<div class="top-list">' + CHIUSURA.topToday.slice(0, 12).map((p, idx) => (
+                '<div class="top-row">' +
+                  '<span class="rank">' + (idx + 1) + '</span>' +
+                  '<span class="name">' + escapeHtml(p.name) + '</span>' +
+                  '<span class="qty">' + numFmt(p.qty, 0) + '×</span>' +
+                  '<span class="rev">' + euroFmt(p.rev) + '</span>' +
+                '</div>'
+              )).join("") + '</div>'
+          ) +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  // Wire input contati + note
+  ["cash", "card", "voucher"].forEach((k) => {
+    const el = document.getElementById("ch_" + k);
+    if (el && !closed) el.addEventListener("input", (e) => {
+      CHIUSURA.counted[k] = e.target.value;
+      chiusuraRender(); // re-render per aggiornare differenze
+      // Mantieni focus sull'input modificato
+      const refocus = document.getElementById("ch_" + k);
+      if (refocus){ refocus.focus(); refocus.setSelectionRange(refocus.value.length, refocus.value.length); }
+    });
+  });
+  const notes = document.getElementById("chiusuraNotes");
+  if (notes && !closed) notes.addEventListener("input", (e) => { CHIUSURA.notes = e.target.value; });
+}
+
+function chStat(label, value, tone){
+  return '<div class="ch-stat ' + (tone || "") + '">' +
+    '<div class="lab">' + escapeHtml(label) + '</div>' +
+    '<div class="val">' + escapeHtml(value) + '</div>' +
+  '</div>';
+}
+
+function chRecRow(label, expectedCents, countedStr, key, diff, disabled){
+  return '<div class="ch-row">' +
+    '<div>' + escapeHtml(label) + '</div>' +
+    '<div>' + euroFmt(expectedCents) + '</div>' +
+    '<div><input class="input ch-input" id="ch_' + key + '" type="text" inputmode="decimal" placeholder="0,00 €" value="' + escapeHtml(countedStr || "") + '"' + (disabled ? " disabled" : "") + ' /></div>' +
+    '<div class="' + (diff === 0 ? "diff-ok" : (diff >= 0 ? "diff-pos" : "diff-neg")) + '">' + diffLabel(diff) + '</div>' +
+  '</div>';
+}
+
+function diffLabel(d){
+  if (d === 0) return "= 0,00 €";
+  return (d > 0 ? "+ " : "− ") + euroFmt(Math.abs(d));
+}
+
+function chiusuraDateChanged(){ /* gestito via listener change */ }
+
+async function chiusuraSave(){
+  if (CHIUSURA.saving || CHIUSURA.existing) return;
+  const isToday = CHIUSURA.date === localDateStr(new Date());
+  if (!isToday){ toast("Puoi chiudere solo la giornata corrente", "error"); return; }
+
+  const ok = await brioConfirm({
+    title: "Confermi la chiusura?",
+    message: "Dopo la chiusura la giornata sarà consultabile ma non più modificabile.",
+    okLabel: "Chiudi giornata",
+    cancelLabel: "Annulla",
+    icon: "🔒",
+  });
+  if (!ok) return;
+
+  CHIUSURA.saving = true;
+  const orgId = BRIO.org.id;
+  const exp = CHIUSURA.expected || {};
+  const cCash = parseEuroInput(CHIUSURA.counted.cash);
+  const cCard = parseEuroInput(CHIUSURA.counted.card);
+  const cVouch = parseEuroInput(CHIUSURA.counted.voucher);
+  const ordersCount = Number(exp.orders_count || 0);
+  const totalExpected = Number(exp.total_cents || 0);
+  const avgTicket = ordersCount > 0 ? Math.round(totalExpected / ordersCount) : 0;
+
+  const payload = {
+    org_id: orgId,
+    close_date: CHIUSURA.date,
+    expected_cash_cents: Number(exp.cash_cents || 0),
+    expected_card_cents: Number(exp.card_cents || 0),
+    expected_voucher_cents: Number(exp.voucher_cents || 0),
+    expected_total_cents: totalExpected,
+    counted_cash_cents: cCash,
+    counted_card_cents: cCard,
+    counted_voucher_cents: cVouch,
+    diff_cash_cents: cCash - Number(exp.cash_cents || 0),
+    diff_card_cents: cCard - Number(exp.card_cents || 0),
+    orders_count: ordersCount,
+    avg_ticket_cents: avgTicket,
+    cogs_cents: CHIUSURA.cogsToday,
+    notes: CHIUSURA.notes || null,
+    closed_by: BRIO.user.id,
+  };
+  const { data, error } = await supa().from("daily_close").insert(payload).select().single();
+  CHIUSURA.saving = false;
+  if (error){
+    err("[chiusura] save", error);
+    toast("Errore chiusura: " + error.message, "error");
+    return;
+  }
+  CHIUSURA.existing = data;
+  toast("Giornata chiusa", "success");
+  chiusuraRender();
+}
+
+// Export CSV corrispettivi giornalieri (formato semplificato per commercialista)
+async function chiusuraExportCsv(){
+  if (!BRIO.org) return;
+  const date = CHIUSURA.date;
+  const orgId = BRIO.org.id;
+  toast("Genero CSV…");
+
+  const { data: rows, error } = await supa()
+    .from("orders")
+    .select("daily_number, daily_date, channel, total_cents, vat_cents, payment_method, paid_cash_cents, paid_card_cents, paid_voucher_cents, change_given_cents, created_at, status")
+    .eq("org_id", orgId)
+    .eq("daily_date", date)
+    .in("status", ["paid","preparing","ready","delivered"])
+    .order("daily_number");
+
+  if (error){ toast("Errore export: " + error.message, "error"); return; }
+
+  const header = ["Numero","Data","Ora","Canale","Stato","Metodo","Contanti","Carta","Buoni","Resto","Imponibile","IVA","Totale"];
+  const csv = [header.join(";")].concat((rows || []).map((r) => {
+    const dt = new Date(r.created_at);
+    const imponibile = Math.max(0, Number(r.total_cents || 0) - Number(r.vat_cents || 0));
+    return [
+      r.daily_number,
+      r.daily_date,
+      timeFmt(dt),
+      r.channel,
+      r.status,
+      r.payment_method || "",
+      euroPlainCsv(r.paid_cash_cents),
+      euroPlainCsv(r.paid_card_cents),
+      euroPlainCsv(r.paid_voucher_cents),
+      euroPlainCsv(r.change_given_cents),
+      euroPlainCsv(imponibile),
+      euroPlainCsv(r.vat_cents),
+      euroPlainCsv(r.total_cents),
+    ].join(";");
+  })).join("\n");
+
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "brio_corrispettivi_" + date + ".csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast("CSV scaricato (" + (rows ? rows.length : 0) + " righe)", "success");
+}
+
+function euroPlainCsv(c){
+  return (Number(c || 0) / 100).toFixed(2).replace(".", ",");
+}
