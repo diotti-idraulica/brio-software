@@ -273,7 +273,8 @@ function render(){
   } else {
     renderChrome(root);
     const main = document.getElementById("appContent");
-    main.innerHTML = "";
+    // NB: non svuotiamo main.innerHTML prima del render — ogni render function
+    // sostituisce già il contenuto, evitando un flash visivo intermedio.
     route.render(main);
     highlightActiveNav(route.name);
   }
@@ -1012,6 +1013,102 @@ const KIOSK = {
   recentSuggestion: null,     // ultimo prodotto aggiunto (per evidenziare cross-sell)
 };
 const KIOSK_SS_KEY = "brio.kiosk.cart";
+const KIOSK_LANG_KEY = "brio.kiosk.lang";
+
+// ============================================================
+// i18n — dizionario IT/EN per le label statiche del Kiosk
+// ============================================================
+const K_I18N = {
+  it: {
+    "splash.welcome": "Sii Brio.",
+    "splash.welcome_accent": "Ordina qui.",
+    "splash.tagline": "Dal caffè al calice",
+    "splash.cta": "Tocca per iniziare",
+    "splash.footnote": "Brio · Piacenza",
+    "menu.new_order": "Nuovo ordine",
+    "menu.cart_title": "Il tuo ordine",
+    "menu.cart_items": "articoli",
+    "menu.cart_empty_msg": "Tocca un prodotto per iniziare",
+    "menu.cart_cancel_all": "Annulla ordine",
+    "menu.cart_confirm": "Procedi al pagamento",
+    "menu.cart_subtotal": "Imponibile",
+    "menu.cart_vat": "IVA",
+    "menu.cart_total": "Totale",
+    "menu.cart_suggest": "Spesso ordinato anche",
+    "menu.cart_each": "cad.",
+    "menu.unavailable": "Esaurito",
+    "personalize.sub_prefix": "Personalizza il tuo prodotto",
+    "personalize.options": "Opzioni",
+    "personalize.none": "Nessuna opzione disponibile.",
+    "personalize.cancel": "Annulla",
+    "personalize.add": "Aggiungi",
+    "pay.title": "Dove vorresti pagare?",
+    "pay.sub": "Scegli come pagare il tuo ordine",
+    "pay.here": "Paga qui",
+    "pay.here_desc": "Con carta al totem",
+    "pay.cassa": "Paga alla cassa",
+    "pay.cassa_desc": "Mostra il numero all'operatrice",
+    "pay.back": "← Indietro",
+    "pay.processing": "Pagamento in corso…",
+    "success.thanks": "Grazie!",
+    "success.your_num": "Il tuo numero d'ordine è",
+    "success.show_at_register": "Mostra questo numero alla cassa per pagare e ritirare.",
+    "success.paid_msg": "Pagamento confermato. Ritira al banco quando pronto.",
+    "success.countdown_prefix": "Tornerò all'inizio tra",
+    "success.countdown_suffix": "secondi",
+  },
+  en: {
+    "splash.welcome": "Be Brio.",
+    "splash.welcome_accent": "Order here.",
+    "splash.tagline": "From coffee to wine",
+    "splash.cta": "Tap to start",
+    "splash.footnote": "Brio · Piacenza, Italy",
+    "menu.new_order": "New order",
+    "menu.cart_title": "Your order",
+    "menu.cart_items": "items",
+    "menu.cart_empty_msg": "Tap a product to start",
+    "menu.cart_cancel_all": "Cancel order",
+    "menu.cart_confirm": "Proceed to payment",
+    "menu.cart_subtotal": "Subtotal",
+    "menu.cart_vat": "VAT",
+    "menu.cart_total": "Total",
+    "menu.cart_suggest": "Often ordered with",
+    "menu.cart_each": "ea.",
+    "menu.unavailable": "Out of stock",
+    "personalize.sub_prefix": "Customize your product",
+    "personalize.options": "Options",
+    "personalize.none": "No customization available.",
+    "personalize.cancel": "Cancel",
+    "personalize.add": "Add",
+    "pay.title": "How would you like to pay?",
+    "pay.sub": "Choose your payment method",
+    "pay.here": "Pay here",
+    "pay.here_desc": "Card at kiosk",
+    "pay.cassa": "Pay at register",
+    "pay.cassa_desc": "Show the number to the cashier",
+    "pay.back": "← Back",
+    "pay.processing": "Processing payment…",
+    "success.thanks": "Thank you!",
+    "success.your_num": "Your order number is",
+    "success.show_at_register": "Show this number at the register to pay and pick up.",
+    "success.paid_msg": "Payment confirmed. Pick up at the counter when ready.",
+    "success.countdown_prefix": "Returning to start in",
+    "success.countdown_suffix": "seconds",
+  }
+};
+
+function kioskLang(){
+  return localStorage.getItem(KIOSK_LANG_KEY) || "it";
+}
+function kioskT(key){
+  const lang = kioskLang();
+  return (K_I18N[lang] && K_I18N[lang][key]) || K_I18N.it[key] || key;
+}
+function kioskSetLang(lang){
+  if (lang !== "it" && lang !== "en") return;
+  localStorage.setItem(KIOSK_LANG_KEY, lang);
+  kioskRender();
+}
 
 async function renderKioskPage(main){
   document.getElementById("appRoot").innerHTML = '<div class="kiosk-root" id="kioskRoot"></div>';
@@ -1081,17 +1178,26 @@ function kioskRender(){
   const exitTrigger = '<div class="kiosk-exit" data-action="kioskCornerTap"></div>';
 
   if (KIOSK.step === "splash"){
+    const cur = kioskLang();
     body =
       '<div class="kiosk-splash" data-action="kioskStart">' +
         exitTrigger +
-        '<div class="lang"><button>🇮🇹 IT</button><button>🇬🇧 EN</button></div>' +
-        '<div class="logo brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
-        '<div class="tagline">Dal caffè al calice</div>' +
-        '<button class="cta">Tocca per ordinare</button>' +
+        '<div class="lang">' +
+          // Stop propagation per il tap sui bottoni lingua: non vogliamo che entrino al menu
+          '<button class="' + (cur === "it" ? "active" : "") + '" onclick="event.stopPropagation(); kioskSetLang(\'it\')">🇮🇹 IT</button>' +
+          '<button class="' + (cur === "en" ? "active" : "") + '" onclick="event.stopPropagation(); kioskSetLang(\'en\')">🇬🇧 EN</button>' +
+        '</div>' +
+        '<div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
+        '<div class="welcome">' + escapeHtml(kioskT("splash.welcome")) + ' <span class="accent">' + escapeHtml(kioskT("splash.welcome_accent")) + '</span></div>' +
+        '<div class="tagline-big">' + escapeHtml(kioskT("splash.tagline")) + '</div>' +
+        '<button class="cta">' + escapeHtml(kioskT("splash.cta")) + '</button>' +
+        '<div class="footnote">' + escapeHtml(kioskT("splash.footnote")) + '</div>' +
       '</div>';
   } else if (KIOSK.step === "menu" || KIOSK.step === "personalize"){
     // In personalize il menu rimane visibile come sfondo; la sheet viene aggiunta sopra
     body = kioskRenderMenu();
+  } else if (KIOSK.step === "payment_choice"){
+    body = kioskRenderPaymentChoice();
   } else if (KIOSK.step === "success"){
     body = kioskRenderSuccess();
   }
@@ -1102,8 +1208,8 @@ function kioskRender(){
   if (KIOSK.step === "personalize" && KIOSK.pendingProduct){
     document.body.insertAdjacentHTML("beforeend", kioskRenderPersonalize());
   } else {
-    const open = document.getElementById("kpzModal");
-    if (open) open.remove();
+    // Rimuovi TUTTI gli eventuali kpzModal duplicati (safety)
+    document.querySelectorAll("#kpzModal").forEach((m) => m.remove());
   }
 
   kioskBumpIdle();
@@ -1140,8 +1246,9 @@ function kioskRenderMenu(){
   return (
     '<div class="kiosk-exit" data-action="kioskCornerTap"></div>' +
     '<div class="kiosk-header">' +
-      '<div class="logo-small"><span class="b">b</span>rio</div>' +
-      '<button class="home-btn" data-action="kioskReset">⟲ Nuovo ordine</button>' +
+      // Solo icona "b" gradient, niente wordmark "rio" ripetuto
+      '<div class="logo-small" style="font-size:36px"><span class="b">b</span></div>' +
+      '<button class="home-btn" data-action="kioskReset">⟲ ' + escapeHtml(kioskT("menu.new_order")) + '</button>' +
     '</div>' +
     '<div class="kiosk-body">' +
       '<div class="kiosk-content">' +
@@ -1159,7 +1266,9 @@ function kioskRenderHero(){
   const offer = kioskCurrentOffer();
   if (!offer) return "";
   const action = offer.combo && offer.combo.length > 0 ? "kioskAddCombo" : "";
-  const args = offer.combo ? JSON.stringify(offer.combo) : "[]";
+  // Doppia parentesi: il delegator chiama fn.apply(null, args) — dobbiamo passare
+  // l'intero array come UN unico parametro, quindi wrappiamo: [[...skus...]]
+  const args = offer.combo ? JSON.stringify([offer.combo]) : "[]";
   return (
     '<div class="kiosk-hero" ' + (action ? 'data-action="' + action + '" data-args=\'' + args.replace(/'/g, "&#39;") + '\' style="cursor:pointer"' : '') + '>' +
       '<div>' +
@@ -1257,7 +1366,7 @@ function kioskRenderPersonalize(){
         '<div class="kpz-head">' +
           '<div>' +
             '<h2>' + escapeHtml(p.name) + '</h2>' +
-            '<div class="sub">' + escapeHtml(p.description || "Personalizza il tuo prodotto") + '</div>' +
+            '<div class="sub">' + escapeHtml(p.description || kioskT("personalize.sub_prefix")) + '</div>' +
           '</div>' +
           '<button class="modal-close" data-action="kioskCancelPersonalize">×</button>' +
         '</div>' +
@@ -1265,7 +1374,7 @@ function kioskRenderPersonalize(){
           (customs.length === 0
             ? '<div class="muted text-center" style="padding:30px;font-size:14px">Questo prodotto non ha personalizzazioni. Aggiungilo direttamente.</div>'
             : '<div class="kpz-section">' +
-                '<div class="lbl">Opzioni</div>' +
+                '<div class="lbl">' + escapeHtml(kioskT("personalize.options")) + '</div>' +
                 opts +
               '</div>'
           ) +
@@ -1284,9 +1393,9 @@ function kioskRenderCart(){
   if (KIOSK.cart.length === 0){
     return (
       '<div class="kiosk-cart">' +
-        '<div class="cart-h"><h3>Il tuo ordine</h3><div class="count">Carrello vuoto</div></div>' +
-        '<div class="cart-l"><div class="cart-empty"><div class="icon">🛒</div>Tocca un prodotto per iniziare</div></div>' +
-        '<div class="cart-f"><button class="cta-pay" disabled>Procedi</button></div>' +
+        '<div class="cart-h"><h3>' + escapeHtml(kioskT("menu.cart_title")) + '</h3></div>' +
+        '<div class="cart-l"><div class="cart-empty"><div class="icon">🛒</div>' + escapeHtml(kioskT("menu.cart_empty_msg")) + '</div></div>' +
+        '<div class="cart-f"><button class="cta-pay" disabled>' + escapeHtml(kioskT("menu.cart_confirm")) + '</button></div>' +
       '</div>'
     );
   }
@@ -1295,7 +1404,7 @@ function kioskRenderCart(){
     return '<div class="citem">' +
       '<div>' +
         '<div class="n">' + escapeHtml(r.product_name) + '</div>' +
-        '<div class="u">' + euroFmt(r.unit_price_cents) + ' cad.</div>' +
+        '<div class="u">' + euroFmt(r.unit_price_cents) + ' ' + escapeHtml(kioskT("menu.cart_each")) + '</div>' +
         (chips ? '<div class="chips">' + chips + '</div>' : '') +
         '<div class="qc">' +
           '<button data-action="kioskDecQty" data-args="[' + idx + ']">−</button>' +
@@ -1313,18 +1422,18 @@ function kioskRenderCart(){
       '<div class="cart-h">' +
         '<div style="display:flex;justify-content:space-between;align-items:center">' +
           '<div>' +
-            '<h3>Il tuo ordine</h3>' +
-            '<div class="count">' + KIOSK.cart.reduce((a, r) => a + r.qty, 0) + ' articoli</div>' +
+            '<h3>' + escapeHtml(kioskT("menu.cart_title")) + '</h3>' +
+            '<div class="count">' + KIOSK.cart.reduce((a, r) => a + r.qty, 0) + ' ' + escapeHtml(kioskT("menu.cart_items")) + '</div>' +
           '</div>' +
-          '<button class="cancel-all" data-action="kioskClearCart">Annulla ordine</button>' +
+          '<button class="cancel-all" data-action="kioskClearCart">' + escapeHtml(kioskT("menu.cart_cancel_all")) + '</button>' +
         '</div>' +
       '</div>' +
       '<div class="cart-l">' + items + kioskRenderCrossSell() + '</div>' +
       '<div class="cart-f">' +
-        '<div class="total-line"><span>Imponibile</span><span>' + euroFmt(totals.total - totals.vat) + '</span></div>' +
-        '<div class="total-line"><span>IVA</span><span>' + euroFmt(totals.vat) + '</span></div>' +
-        '<div class="total-line grand"><span>Totale</span><span>' + euroFmt(totals.total) + '</span></div>' +
-        '<button class="cta-pay" data-action="kioskConfirmOrder">Conferma e paga alla cassa</button>' +
+        '<div class="total-line"><span>' + escapeHtml(kioskT("menu.cart_subtotal")) + '</span><span>' + euroFmt(totals.total - totals.vat) + '</span></div>' +
+        '<div class="total-line"><span>' + escapeHtml(kioskT("menu.cart_vat")) + '</span><span>' + euroFmt(totals.vat) + '</span></div>' +
+        '<div class="total-line grand"><span>' + escapeHtml(kioskT("menu.cart_total")) + '</span><span>' + euroFmt(totals.total) + '</span></div>' +
+        '<button class="cta-pay" data-action="kioskGotoPay">' + escapeHtml(kioskT("menu.cart_confirm")) + '</button>' +
       '</div>' +
     '</div>'
   );
@@ -1336,7 +1445,7 @@ function kioskRenderCrossSell(){
   if (suggestions.length === 0) return "";
   return (
     '<div class="xsell">' +
-      '<h4>Spesso ordinato anche</h4>' +
+      '<h4>' + escapeHtml(kioskT("menu.cart_suggest")) + '</h4>' +
       '<div class="xsell-grid">' +
         suggestions.slice(0, 6).map((p) => (
           '<div class="xsell-item" data-action="kioskOnProductTap" data-args=\'["' + p.id + '"]\'>' +
@@ -1393,15 +1502,16 @@ function kioskGetSuggestions(){
 
 function kioskRenderSuccess(){
   const ord = KIOSK.lastOrder;
+  const paid = ord && ord.status === "paid";
   return (
     '<div class="kiosk-exit" data-action="kioskCornerTap"></div>' +
     '<div class="kiosk-success">' +
       '<div class="ok">✅</div>' +
-      '<h1>Grazie!</h1>' +
-      '<div class="muted" style="font-size:14px;text-transform:uppercase;letter-spacing:.08em;margin-top:8px">Il tuo numero d\'ordine è</div>' +
+      '<h1>' + escapeHtml(kioskT("success.thanks")) + '</h1>' +
+      '<div class="muted" style="font-size:14px;text-transform:uppercase;letter-spacing:.08em;margin-top:8px">' + escapeHtml(kioskT("success.your_num")) + '</div>' +
       '<div class="num">#' + (ord ? ord.daily_number : "?") + '</div>' +
-      '<div class="msg">Mostra questo numero alla cassa per pagare e ritirare.</div>' +
-      '<div class="countdown" id="kioskCountdown">Tornerò all\'inizio tra <span id="kioskTimer">10</span> secondi</div>' +
+      '<div class="msg">' + escapeHtml(paid ? kioskT("success.paid_msg") : kioskT("success.show_at_register")) + '</div>' +
+      '<div class="countdown" id="kioskCountdown">' + escapeHtml(kioskT("success.countdown_prefix")) + ' <span id="kioskTimer">15</span> ' + escapeHtml(kioskT("success.countdown_suffix")) + '</div>' +
     '</div>'
   );
 }
@@ -1493,11 +1603,12 @@ function kioskConfirmPersonalize(){
   if (!p) return;
   const customs = Array.isArray(p.customizations) ? p.customizations : [];
   const selected = customs.filter((c) => KIOSK.pendingSelections[c.label]);
-  kioskAddToCart(p, selected);
+  // Cleanup PRIMA di chiamare kioskAddToCart, altrimenti il render interno
+  // ricreerebbe il modal (state ancora "personalize") creando un duplicato.
   KIOSK.pendingProduct = null;
   KIOSK.pendingSelections = {};
   KIOSK.step = "menu";
-  kioskRender();
+  kioskAddToCart(p, selected);
 }
 
 // Aggiunge al carrello.
@@ -1548,21 +1659,69 @@ function kioskClearCart(){
   kioskRender();
 }
 
-async function kioskConfirmOrder(){
+// Vai allo step di scelta pagamento (chiamato dal bottone "Procedi al pagamento")
+function kioskGotoPay(){
+  if (KIOSK.cart.length === 0) return;
+  KIOSK.step = "payment_choice";
+  kioskRender();
+}
+
+// Torna al menu dallo step pagamento
+function kioskBackToMenu(){
+  KIOSK.step = "menu";
+  kioskRender();
+}
+
+/**
+ * Step "Dove vorresti pagare?" con 2 grandi card:
+ *  - Paga qui: pagamento al totem (per ora simulato come carta)
+ *  - Paga alla cassa: cliente paga alla cassa mostrando il numero
+ */
+function kioskRenderPaymentChoice(){
+  return (
+    '<div class="kiosk-exit" data-action="kioskCornerTap"></div>' +
+    '<div class="kiosk-pay">' +
+      '<button class="kiosk-pay-back-btn" data-action="kioskBackToMenu">' + escapeHtml(kioskT("pay.back")) + '</button>' +
+      '<h1>' + escapeHtml(kioskT("pay.title")) + '</h1>' +
+      '<div class="pay-sub">' + escapeHtml(kioskT("pay.sub")) + '</div>' +
+      '<div class="kiosk-pay-cards">' +
+        '<div class="kiosk-pay-card primary" data-action="kioskPayHere">' +
+          '<div class="icon">💳</div>' +
+          '<div class="name">' + escapeHtml(kioskT("pay.here")) + '</div>' +
+          '<div class="desc">' + escapeHtml(kioskT("pay.here_desc")) + '</div>' +
+        '</div>' +
+        '<div class="kiosk-pay-card" data-action="kioskPayCassa">' +
+          '<div class="icon">🧾</div>' +
+          '<div class="name">' + escapeHtml(kioskT("pay.cassa")) + '</div>' +
+          '<div class="desc">' + escapeHtml(kioskT("pay.cassa_desc")) + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+/**
+ * Crea l'ordine su Supabase con il payment_method scelto.
+ *  - paid=true → status="paid", payment_method="card" (simulato per ora, futuro: integrazione POS)
+ *  - paid=false → status="pending", payment_method="pending" (paga in cassa)
+ */
+async function kioskCreateOrder(paid){
   if (KIOSK.cart.length === 0) return;
   const t = kioskCartTotals();
-  // INSERT order con status='pending' (paga alla cassa = pending)
-  const { data: ord, error: ordErr } = await supa().from("orders").insert({
+
+  const payload = {
     org_id: BRIO.org.id,
     channel: "kiosk",
-    status: "pending",
+    status: paid ? "pending" : "pending", // step iniziale sempre pending; se paid, faremo update dopo gli items
     subtotal_cents: t.total,
     total_cents: t.total,
     vat_cents: t.vat,
-    payment_method: "pending",
-  }).select().single();
+    payment_method: paid ? "card" : "pending",
+    paid_card_cents: paid ? t.total : 0,
+  };
 
-  if (ordErr){ err("[kiosk] insert", ordErr); toast("Errore: " + ordErr.message, "error"); return; }
+  const { data: ord, error: ordErr } = await supa().from("orders").insert(payload).select().single();
+  if (ordErr){ err("[kiosk] insert", ordErr); toast("Errore: " + ordErr.message, "error"); return null; }
 
   const items = KIOSK.cart.map((r) => ({
     order_id: ord.id,
@@ -1575,19 +1734,62 @@ async function kioskConfirmOrder(){
     customizations: r.customizations || [],
     kds_status: "queued",
   }));
-  await supa().from("order_items").insert(items);
+  const { error: itErr } = await supa().from("order_items").insert(items);
+  if (itErr){ err("[kiosk] items", itErr); toast("Errore voci ordine", "error"); return null; }
 
+  // Se "Paga qui", marca pagato → trigger DB scarica magazzino + registra transaction
+  if (paid){
+    const { error: upErr } = await supa().from("orders").update({ status: "paid" }).eq("id", ord.id);
+    if (upErr) err("[kiosk] update paid", upErr);
+    // Registra transaction (registro cassa)
+    await supa().from("transactions").insert({
+      org_id: BRIO.org.id,
+      order_id: ord.id,
+      type: "sale",
+      amount_cents: t.total,
+      method: "card",
+    });
+    ord.status = "paid";
+  }
+
+  return ord;
+}
+
+async function kioskPayHere(){
+  if (KIOSK.saving) return;
+  KIOSK.saving = true;
+  toast(kioskT("pay.processing"));
+  const ord = await kioskCreateOrder(true);
+  KIOSK.saving = false;
+  if (!ord) return;
   KIOSK.lastOrder = ord;
   sessionStorage.removeItem(KIOSK_SS_KEY);
   kioskGoto("success");
+  kioskStartSuccessCountdown();
+}
 
-  // Auto-reset dopo 15s
+async function kioskPayCassa(){
+  if (KIOSK.saving) return;
+  KIOSK.saving = true;
+  const ord = await kioskCreateOrder(false);
+  KIOSK.saving = false;
+  if (!ord) return;
+  KIOSK.lastOrder = ord;
+  sessionStorage.removeItem(KIOSK_SS_KEY);
+  kioskGoto("success");
+  kioskStartSuccessCountdown();
+}
+
+function kioskStartSuccessCountdown(){
   let cd = 15;
   const tick = setInterval(() => {
     cd--;
-    const el = document.getElementById("kioskTimer");
-    if (el) el.textContent = cd;
-    if (cd <= 0){ clearInterval(tick); kioskReset(); }
+    const elTimer = document.getElementById("kioskTimer");
+    if (elTimer) elTimer.textContent = cd;
+    if (cd <= 0 || KIOSK.step !== "success"){
+      clearInterval(tick);
+      if (KIOSK.step === "success") kioskReset();
+    }
   }, 1000);
 }
 
