@@ -711,8 +711,8 @@ function showCheckoutModal(){
   const canConfirm = CASSA.paymentMethod === "card" || CASSA.cashGiven >= total;
 
   document.body.insertAdjacentHTML("beforeend",
-    '<div class="modal-backdrop" id="checkoutModal" data-action="cassaCloseCheckoutOnBackdrop">' +
-      '<div class="modal" onclick="event.stopPropagation()">' +
+    '<div class="modal-backdrop" id="checkoutModal" onclick="if(event.target===this) cassaCloseCheckout()">' +
+      '<div class="modal">' +
         '<div class="modal-head">' +
           '<h2>Pagamento · ' + euroFmt(total) + '</h2>' +
           '<button class="modal-close" data-action="cassaCloseCheckout">×</button>' +
@@ -752,7 +752,6 @@ function cassaCloseCheckout(){
   const m = document.getElementById("checkoutModal");
   if (m) m.remove();
 }
-function cassaCloseCheckoutOnBackdrop(){ /* solo se click fuori dal modal interno - già gestito da stopPropagation */ cassaCloseCheckout(); }
 
 function cassaSetPayment(method){
   CASSA.paymentMethod = method;
@@ -858,8 +857,8 @@ async function cassaConfirmOrder(){
 
 function showReceiptModal(order, change){
   document.body.insertAdjacentHTML("beforeend",
-    '<div class="modal-backdrop" id="receiptModal" data-action="cassaCloseReceipt">' +
-      '<div class="modal" onclick="event.stopPropagation()">' +
+    '<div class="modal-backdrop" id="receiptModal" onclick="if(event.target===this) cassaCloseReceipt()">' +
+      '<div class="modal">' +
         '<div class="modal-body">' +
           '<div class="receipt-success">' +
             '<div class="icon">✅</div>' +
