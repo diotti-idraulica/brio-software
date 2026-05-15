@@ -976,39 +976,59 @@ function cassaCloseReceipt(){
 }
 
 /* ============================================================
- * MODULO KIOSK · self-order totem
+ * MODULO KIOSK · self-order totem (v2)
  * ============================================================
- * Esperienza cliente:
- *  - Splash iniziale "Tocca per ordinare"
- *  - Selezione categoria → griglia prodotti grandi
- *  - Carrello laterale persistente
- *  - Conferma → numero ordine grande, va alla cassa per pagare
- *  - Auto-reset dopo 60s di inattività
- *  - Uscita admin: 4 tap rapidi in alto a destra
+ * Step:
+ *  - splash → menu → (personalize?) → menu → ... → success
+ * Funzionalità:
+ *  - Hero time-based (colazione/pranzo/aperitivo/giornaliera)
+ *  - Personalizzazione ingredienti via modal "bottom sheet"
+ *  - Cross-sell intelligente dopo aggiunta al carrello
+ *  - Annulla riga + annulla intero carrello sempre visibili
+ *  - Carrello persistito in sessionStorage (no reset su tab switch)
+ *  - Idle timer pause su document.hidden
+ *  - Uscita admin: 4 tap rapidi corner top-right
  * ============================================================ */
 const KIOSK = {
-  step: "splash",       // splash | menu | success
+  step: "splash",
   categories: [],
   products: [],
   byCat: {},
   activeCatId: null,
   cart: [],
+  pendingProduct: null,
+  pendingSelections: {},     // { customizationLabel: true|false }
   lastOrder: null,
   idleTimer: null,
+  idleStartMs: 0,
   exitTaps: [],
+  recentSuggestion: null,     // ultimo prodotto aggiunto (per evidenziare cross-sell)
 };
+const KIOSK_SS_KEY = "brio.kiosk.cart";
 
 async function renderKioskPage(main){
-  // Sostituisce il container con un fullscreen root
   document.getElementById("appRoot").innerHTML = '<div class="kiosk-root" id="kioskRoot"></div>';
 
   await kioskLoadData();
-  kioskGoto("splash");
+  // Carrello da sessionStorage (sopravvive a tab switch / reload)
+  try {
+    const saved = sessionStorage.getItem(KIOSK_SS_KEY);
+    if (saved){
+      const data = JSON.parse(saved);
+      if (Array.isArray(data.cart) && data.cart.length){
+        KIOSK.cart = data.cart;
+        KIOSK.step = "menu"; // resume direttamente al menu, non al splash
+      }
+    }
+  } catch(e){ /* ignore */ }
 
-  // Pre-attiva auto-reset listener
+  kioskRender();
+
+  // Listener idle + visibility
   ["click","touchstart","keydown"].forEach((ev) => {
     document.addEventListener(ev, kioskBumpIdle, true);
   });
+  document.addEventListener("visibilitychange", kioskOnVisibility, true);
 }
 
 async function kioskLoadData(){
@@ -1033,9 +1053,17 @@ function kioskGoto(step){
   KIOSK.step = step;
   if (step === "splash"){
     KIOSK.cart = [];
+    KIOSK.recentSuggestion = null;
+    sessionStorage.removeItem(KIOSK_SS_KEY);
     clearTimeout(KIOSK.idleTimer);
   }
   kioskRender();
+}
+
+function kioskPersistCart(){
+  try {
+    sessionStorage.setItem(KIOSK_SS_KEY, JSON.stringify({ cart: KIOSK.cart }));
+  } catch(e){ /* ignore */ }
 }
 
 function kioskRender(){
@@ -1043,7 +1071,6 @@ function kioskRender(){
   if (!root) return;
   let body = "";
 
-  // Trigger uscita admin (hidden corner)
   const exitTrigger = '<div class="kiosk-exit" data-action="kioskCornerTap"></div>';
 
   if (KIOSK.step === "splash"){
@@ -1062,6 +1089,15 @@ function kioskRender(){
   }
 
   root.innerHTML = body;
+
+  // Personalize è un modal sopra al menu (non sostituisce il body)
+  if (KIOSK.step === "personalize" && KIOSK.pendingProduct){
+    document.body.insertAdjacentHTML("beforeend", kioskRenderPersonalize());
+  } else {
+    const open = document.getElementById("kpzModal");
+    if (open) open.remove();
+  }
+
   kioskBumpIdle();
 }
 
@@ -1076,10 +1112,12 @@ function kioskRenderMenu(){
 
   const products = (KIOSK.byCat[KIOSK.activeCatId] || []).map((p) => {
     const avail = kioskProductAvailable(p);
-    const emoji = kioskProductEmoji(p);
+    const photo = p.image_url
+      ? '<div class="photo-area" style="background-image:url(\'' + escapeHtml(p.image_url) + '\');background-size:cover;background-position:center"></div>'
+      : '<div class="photo-area">' + kioskProductEmoji(p) + '</div>';
     return '<div class="kiosk-product ' + (avail ? "" : "unavailable") + '"' +
-      ' data-action="' + (avail ? "kioskAddToCart" : "noop") + '" data-args=\'["' + p.id + '"]\'>' +
-      '<div class="photo-area">' + emoji + '</div>' +
+      ' data-action="' + (avail ? "kioskOnProductTap" : "noop") + '" data-args=\'["' + p.id + '"]\'>' +
+      photo +
       '<div>' +
         '<div class="name">' + escapeHtml(p.name) + '</div>' +
         '<div class="desc">' + escapeHtml(p.description || "") + '</div>' +
@@ -1099,19 +1137,102 @@ function kioskRenderMenu(){
     '</div>' +
     '<div class="kiosk-body">' +
       '<div class="kiosk-content">' +
-        // Hero offerta (statica per ora, futuro: tabella offers)
-        '<div class="kiosk-hero">' +
-          '<div>' +
-            '<div class="badge">Offerta del giorno</div>' +
-            '<h2>Caffè + brioche · €2,30</h2>' +
-            '<p>Dalle 7:00 alle 10:00 · risparmi €0,20</p>' +
-          '</div>' +
-          '<div class="icon">☕🥐</div>' +
-        '</div>' +
+        kioskRenderHero() +
         '<div class="kiosk-cats">' + cats + '</div>' +
         '<div class="kiosk-products">' + products + '</div>' +
       '</div>' +
       kioskRenderCart() +
+    '</div>'
+  );
+}
+
+// =========== HERO time-based offerta ==========
+function kioskRenderHero(){
+  const hr = new Date().getHours();
+  let badge, title, msg, icon;
+  if (hr >= 7 && hr < 11){
+    badge = "Offerta colazione";
+    title = "Caffè + brioche · €2,30";
+    msg = "Fino alle 10:00 · risparmi €0,20";
+    icon = "☕🥐";
+  } else if (hr >= 11 && hr < 15){
+    badge = "Menù pranzo";
+    title = "Piadina + bevanda · €7,50";
+    msg = "Pranzo veloce 11:30-14:30 · risparmi €0,50";
+    icon = "🥙🥤";
+  } else if (hr >= 17 && hr < 20){
+    badge = "Aperitivo del giorno";
+    title = "Birra + tagliere mini · €8,50";
+    msg = "Happy hour 17:30-19:30 · risparmi €1,00";
+    icon = "🍺🧀";
+  } else {
+    badge = "Sempre con te";
+    title = "Caffè in qualsiasi momento";
+    msg = "Vieni quando vuoi · siamo aperti";
+    icon = "☕";
+  }
+  return (
+    '<div class="kiosk-hero">' +
+      '<div>' +
+        '<div class="badge">' + escapeHtml(badge) + '</div>' +
+        '<h2>' + escapeHtml(title) + '</h2>' +
+        '<p>' + escapeHtml(msg) + '</p>' +
+      '</div>' +
+      '<div class="icon">' + icon + '</div>' +
+    '</div>'
+  );
+}
+
+// =========== PERSONALIZZAZIONE (bottom sheet) ==========
+function kioskRenderPersonalize(){
+  const p = KIOSK.pendingProduct;
+  if (!p) return "";
+  const customs = Array.isArray(p.customizations) ? p.customizations : [];
+
+  // Calcolo prezzo corrente
+  let extra = 0;
+  customs.forEach((c) => {
+    if (KIOSK.pendingSelections[c.label]) extra += Number(c.price_delta_cents || 0);
+  });
+  const finalPrice = Number(p.price_cents) + extra;
+
+  const opts = customs.map((c) => {
+    const sel = !!KIOSK.pendingSelections[c.label];
+    const delta = Number(c.price_delta_cents || 0);
+    return '<div class="kpz-opt ' + (sel ? "selected" : "") + '"' +
+      ' data-action="kioskToggleCustomization" data-args=\'["' + c.label.replace(/'/g, "\\u0027").replace(/"/g, "&quot;") + '"]\'>' +
+      '<div>' + escapeHtml(c.label) + '</div>' +
+      '<div class="flex items-center">' +
+        (delta > 0 ? '<span class="delta">+' + euroFmt(delta) + '</span>' : '') +
+        '<span class="check">' + (sel ? '✓' : '') + '</span>' +
+      '</div>' +
+    '</div>';
+  }).join("");
+
+  return (
+    '<div class="kpz-back" id="kpzModal" onclick="if(event.target===this) kioskCancelPersonalize()">' +
+      '<div class="kpz-sheet">' +
+        '<div class="kpz-head">' +
+          '<div>' +
+            '<h2>' + escapeHtml(p.name) + '</h2>' +
+            '<div class="sub">' + escapeHtml(p.description || "Personalizza il tuo prodotto") + '</div>' +
+          '</div>' +
+          '<button class="modal-close" data-action="kioskCancelPersonalize">×</button>' +
+        '</div>' +
+        '<div class="kpz-body">' +
+          (customs.length === 0
+            ? '<div class="muted text-center" style="padding:30px;font-size:14px">Questo prodotto non ha personalizzazioni. Aggiungilo direttamente.</div>'
+            : '<div class="kpz-section">' +
+                '<div class="lbl">Opzioni</div>' +
+                opts +
+              '</div>'
+          ) +
+        '</div>' +
+        '<div class="kpz-foot">' +
+          '<button class="cancel" data-action="kioskCancelPersonalize">Annulla</button>' +
+          '<button class="add" data-action="kioskConfirmPersonalize">Aggiungi · ' + euroFmt(finalPrice) + '</button>' +
+        '</div>' +
+      '</div>' +
     '</div>'
   );
 }
@@ -1127,25 +1248,36 @@ function kioskRenderCart(){
       '</div>'
     );
   }
-  const items = KIOSK.cart.map((r, idx) => (
-    '<div class="citem">' +
+  const items = KIOSK.cart.map((r, idx) => {
+    const chips = (r.customizations || []).map((c) => '<span class="chip">' + escapeHtml(c.label) + (c.price_delta_cents > 0 ? " +" + euroFmt(c.price_delta_cents) : "") + '</span>').join("");
+    return '<div class="citem">' +
       '<div>' +
         '<div class="n">' + escapeHtml(r.product_name) + '</div>' +
         '<div class="u">' + euroFmt(r.unit_price_cents) + ' cad.</div>' +
+        (chips ? '<div class="chips">' + chips + '</div>' : '') +
         '<div class="qc">' +
           '<button data-action="kioskDecQty" data-args="[' + idx + ']">−</button>' +
           '<span class="qty">' + r.qty + '</span>' +
           '<button data-action="kioskIncQty" data-args="[' + idx + ']">+</button>' +
         '</div>' +
       '</div>' +
-      '<div class="lt">' + euroFmt(r.unit_price_cents * r.qty) + '</div>' +
-    '</div>'
-  )).join("");
+      '<button class="x-row" data-action="kioskRemoveRow" data-args="[' + idx + ']" title="Rimuovi">×</button>' +
+      '<div class="lt" style="grid-column:2">' + euroFmt(r.unit_price_cents * r.qty) + '</div>' +
+    '</div>';
+  }).join("");
 
   return (
     '<div class="kiosk-cart">' +
-      '<div class="cart-h"><h3>Il tuo ordine</h3><div class="count">' + KIOSK.cart.reduce((a, r) => a + r.qty, 0) + ' articoli</div></div>' +
-      '<div class="cart-l">' + items + '</div>' +
+      '<div class="cart-h">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center">' +
+          '<div>' +
+            '<h3>Il tuo ordine</h3>' +
+            '<div class="count">' + KIOSK.cart.reduce((a, r) => a + r.qty, 0) + ' articoli</div>' +
+          '</div>' +
+          '<button class="cancel-all" data-action="kioskClearCart">Annulla ordine</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="cart-l">' + items + kioskRenderCrossSell() + '</div>' +
       '<div class="cart-f">' +
         '<div class="total-line"><span>Imponibile</span><span>' + euroFmt(totals.total - totals.vat) + '</span></div>' +
         '<div class="total-line"><span>IVA</span><span>' + euroFmt(totals.vat) + '</span></div>' +
@@ -1154,6 +1286,67 @@ function kioskRenderCart(){
       '</div>' +
     '</div>'
   );
+}
+
+// =========== CROSS-SELL ==========
+function kioskRenderCrossSell(){
+  const suggestions = kioskGetSuggestions();
+  if (suggestions.length === 0) return "";
+  return (
+    '<div class="xsell">' +
+      '<h4>Spesso ordinato anche</h4>' +
+      '<div class="xsell-grid">' +
+        suggestions.slice(0, 6).map((p) => (
+          '<div class="xsell-item" data-action="kioskOnProductTap" data-args=\'["' + p.id + '"]\'>' +
+            '<div class="ico">' + kioskProductEmoji(p) + '</div>' +
+            '<div class="nm">' + escapeHtml(p.name) + '</div>' +
+            '<div class="pr">+ ' + euroFmt(p.price_cents) + '</div>' +
+          '</div>'
+        )).join("") +
+      '</div>' +
+    '</div>'
+  );
+}
+
+// Logica: deriva dai tag dei prodotti già nel carrello.
+// Se un prodotto in carrello ha tag "suggests-bevande", suggerisce prodotti della categoria Bevande.
+// Mappa: suggests-bevande → category slug "bevande", suggests-brioche → cerca per nome, suggests-tagliere → cerca per nome.
+function kioskGetSuggestions(){
+  if (KIOSK.cart.length === 0) return [];
+  const cartProductIds = new Set(KIOSK.cart.map((r) => r.product_id));
+  const wantedTags = new Set();
+  KIOSK.cart.forEach((r) => {
+    const p = KIOSK.products.find((x) => x.id === r.product_id);
+    if (!p || !Array.isArray(p.tags)) return;
+    p.tags.forEach((t) => { if (t.startsWith("suggests-")) wantedTags.add(t.replace("suggests-", "")); });
+  });
+  if (wantedTags.size === 0) return [];
+
+  // Map wantedTag → category slug or keyword
+  const out = [];
+  const seen = new Set();
+  wantedTags.forEach((tag) => {
+    let pool = [];
+    if (tag === "bevande"){
+      pool = KIOSK.products.filter((p) => {
+        const cat = KIOSK.categories.find((c) => c.id === p.category_id);
+        return cat && cat.slug === "bevande";
+      });
+    } else if (tag === "caffe"){
+      pool = KIOSK.products.filter((p) => /caff|cappuccino|marocchino|ginseng|orzo/i.test(p.name));
+    } else if (tag === "brioche"){
+      pool = KIOSK.products.filter((p) => /brioche/i.test(p.name));
+    } else if (tag === "tagliere"){
+      pool = KIOSK.products.filter((p) => /tagliere/i.test(p.name));
+    }
+    pool.forEach((p) => {
+      if (cartProductIds.has(p.id) || seen.has(p.id)) return;
+      if (!kioskProductAvailable(p)) return;
+      seen.add(p.id);
+      out.push(p);
+    });
+  });
+  return out;
 }
 
 function kioskRenderSuccess(){
@@ -1210,8 +1403,13 @@ function kioskCartTotals(){
 function kioskStart(){ kioskGoto("menu"); }
 
 function kioskReset(){
+  if (KIOSK.cart.length > 0){
+    if (!confirm("Annullare l'ordine corrente e ricominciare?")) return;
+  }
   KIOSK.cart = [];
   KIOSK.lastOrder = null;
+  KIOSK.recentSuggestion = null;
+  sessionStorage.removeItem(KIOSK_SS_KEY);
   kioskGoto("splash");
 }
 
@@ -1220,24 +1418,91 @@ function kioskSwitchCat(catId){
   kioskRender();
 }
 
-function kioskAddToCart(productId){
+// Quando si tocca un prodotto nella griglia: se ha customizations, apri sheet personalizza.
+// Altrimenti aggiungi direttamente al carrello.
+function kioskOnProductTap(productId){
   const p = KIOSK.products.find((x) => x.id === productId);
   if (!p) return;
-  const ex = KIOSK.cart.find((c) => c.product_id === productId);
-  if (ex) ex.qty += 1;
-  else KIOSK.cart.push({
-    product_id: p.id,
-    product_name: p.name,
-    unit_price_cents: p.price_cents,
-    vat_rate: p.vat_rate,
-    qty: 1,
-  });
+  const hasCustom = Array.isArray(p.customizations) && p.customizations.length > 0;
+  if (!hasCustom){
+    kioskAddToCart(p, []);
+    return;
+  }
+  KIOSK.pendingProduct = p;
+  KIOSK.pendingSelections = {};
+  KIOSK.step = "personalize";
   kioskRender();
 }
-function kioskIncQty(idx){ KIOSK.cart[idx].qty += 1; kioskRender(); }
+
+function kioskToggleCustomization(label){
+  KIOSK.pendingSelections[label] = !KIOSK.pendingSelections[label];
+  kioskRender();
+}
+
+function kioskCancelPersonalize(){
+  KIOSK.pendingProduct = null;
+  KIOSK.pendingSelections = {};
+  KIOSK.step = "menu";
+  kioskRender();
+}
+
+function kioskConfirmPersonalize(){
+  const p = KIOSK.pendingProduct;
+  if (!p) return;
+  const customs = Array.isArray(p.customizations) ? p.customizations : [];
+  const selected = customs.filter((c) => KIOSK.pendingSelections[c.label]);
+  kioskAddToCart(p, selected);
+  KIOSK.pendingProduct = null;
+  KIOSK.pendingSelections = {};
+  KIOSK.step = "menu";
+  kioskRender();
+}
+
+// Aggiunge al carrello.
+// Items con customizations diverse sono righe separate (non incrementa qty).
+function kioskAddToCart(p, customizations){
+  customizations = customizations || [];
+  const extra = customizations.reduce((a, c) => a + Number(c.price_delta_cents || 0), 0);
+  const unitPrice = Number(p.price_cents) + extra;
+  const customKey = customizations.map((c) => c.label).sort().join("|");
+
+  const existing = KIOSK.cart.find((c) =>
+    c.product_id === p.id &&
+    (c.customizations || []).map((x) => x.label).sort().join("|") === customKey
+  );
+  if (existing){
+    existing.qty += 1;
+  } else {
+    KIOSK.cart.push({
+      product_id: p.id,
+      product_name: p.name,
+      base_price_cents: Number(p.price_cents),
+      unit_price_cents: unitPrice,
+      vat_rate: p.vat_rate,
+      qty: 1,
+      customizations: customizations.map((c) => ({ label: c.label, price_delta_cents: Number(c.price_delta_cents || 0) })),
+    });
+  }
+  KIOSK.recentSuggestion = p.id;
+  kioskPersistCart();
+  kioskRender();
+}
+
+function kioskIncQty(idx){ KIOSK.cart[idx].qty += 1; kioskPersistCart(); kioskRender(); }
 function kioskDecQty(idx){
   KIOSK.cart[idx].qty -= 1;
   if (KIOSK.cart[idx].qty <= 0) KIOSK.cart.splice(idx, 1);
+  kioskPersistCart(); kioskRender();
+}
+function kioskRemoveRow(idx){
+  KIOSK.cart.splice(idx, 1);
+  kioskPersistCart(); kioskRender();
+}
+function kioskClearCart(){
+  if (KIOSK.cart.length === 0) return;
+  if (!confirm("Annullare tutto l'ordine?")) return;
+  KIOSK.cart = [];
+  sessionStorage.removeItem(KIOSK_SS_KEY);
   kioskRender();
 }
 
@@ -1265,15 +1530,17 @@ async function kioskConfirmOrder(){
     unit_price_cents: r.unit_price_cents,
     total_cents: r.unit_price_cents * r.qty,
     vat_rate: r.vat_rate,
+    customizations: r.customizations || [],
     kds_status: "queued",
   }));
   await supa().from("order_items").insert(items);
 
   KIOSK.lastOrder = ord;
+  sessionStorage.removeItem(KIOSK_SS_KEY);
   kioskGoto("success");
 
-  // Auto-reset dopo 10s
-  let cd = 10;
+  // Auto-reset dopo 15s
+  let cd = 15;
   const tick = setInterval(() => {
     cd--;
     const el = document.getElementById("kioskTimer");
@@ -1282,15 +1549,29 @@ async function kioskConfirmOrder(){
   }, 1000);
 }
 
-// =========== Idle / esci ==========
+// =========== Idle / Visibility / Esci ==========
+// L'idle resetta dopo 90s di inattività SE c'è qualcosa nel carrello.
+// Se il documento è hidden (cliente passa ad altro / app in background), il timer è messo in pausa.
 function kioskBumpIdle(){
   clearTimeout(KIOSK.idleTimer);
-  if (KIOSK.step === "menu" && KIOSK.cart.length > 0){
-    // 60s di inattività resetta
-    KIOSK.idleTimer = setTimeout(() => {
-      log("[kiosk] auto-reset per inattività");
-      kioskReset();
-    }, 60000);
+  if (document.hidden) return;          // pausa quando tab non attiva
+  if (KIOSK.step !== "menu") return;
+  if (KIOSK.cart.length === 0) return;
+  KIOSK.idleTimer = setTimeout(() => {
+    log("[kiosk] auto-reset per inattività (90s)");
+    KIOSK.cart = [];
+    sessionStorage.removeItem(KIOSK_SS_KEY);
+    kioskGoto("splash");
+  }, 90000);
+}
+
+function kioskOnVisibility(){
+  if (document.hidden){
+    clearTimeout(KIOSK.idleTimer);
+    log("[kiosk] tab nascosta — idle in pausa");
+  } else {
+    log("[kiosk] tab visibile — riprendo idle");
+    kioskBumpIdle();
   }
 }
 
