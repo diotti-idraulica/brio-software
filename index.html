@@ -495,6 +495,81 @@ main#appContent{
 .receipt-success .hint{ color: var(--text-muted); font-size: 13px; }
 
 /* ============================================================
+   MAGAZZINO
+   ============================================================ */
+.stats-row{ display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-bottom:20px; }
+.stat-card{ background: var(--bg-card); border:1px solid var(--line); border-radius: var(--r-lg); padding:16px; }
+.stat-card .stat-label{ font-size:12px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; }
+.stat-card .stat-value{ font-size:28px; font-weight:700; margin-top:4px; }
+.stat-card.warn .stat-value{ color: var(--warning); }
+.stat-card.danger .stat-value{ color: var(--danger); }
+.stat-card.success .stat-value{ color: var(--emerald); }
+
+.filter-bar{ display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center; }
+.filter-chip{
+  padding: 8px 14px; border-radius: 999px;
+  background: var(--bg-card); border: 1px solid var(--line);
+  font-size: 13px; cursor: pointer; user-select: none;
+  transition: all .15s ease;
+}
+.filter-chip:hover{ border-color: var(--line-strong); }
+.filter-chip.active{ background: var(--onyx); color: var(--champagne); border-color: var(--onyx); }
+.filter-chip .badge{ display:inline-block; margin-left:6px; padding:1px 7px; border-radius: 10px; background: rgba(0,0,0,.08); font-size: 11px; font-weight: 600; }
+.filter-chip.active .badge{ background: rgba(255,255,255,.15); }
+
+.inv-table{
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.inv-table table{ width:100%; border-collapse: collapse; }
+.inv-table th{ background: var(--bg-soft); padding: 12px 14px; text-align:left; font-size:12px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; border-bottom: 1px solid var(--line); }
+.inv-table td{ padding: 12px 14px; border-bottom: 1px solid var(--line); font-size:14px; vertical-align: middle; }
+.inv-table tr:last-child td{ border-bottom: 0; }
+.inv-table tbody tr{ cursor: pointer; transition: background .1s ease; }
+.inv-table tbody tr:hover{ background: var(--bg-soft); }
+.inv-table .name{ font-weight: 500; }
+.inv-table .qty{ font-weight: 600; }
+.inv-table .qty-small{ color: var(--text-muted); font-size: 12px; }
+.inv-status{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight: 500; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+.inv-status.ok{ background: rgba(16,185,129,.12); color: #047857; }
+.inv-status.low{ background: rgba(245,158,11,.14); color: #b45309; }
+.inv-status.critical{ background: rgba(220,38,38,.12); color: var(--danger); }
+.inv-status.empty{ background: rgba(10,9,7,.08); color: var(--text-muted); }
+.inv-status .dot{ width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+/* Modal magazzino dettaglio */
+.mag-detail .info-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom: 16px; }
+.mag-detail .info-grid .info{ background: var(--bg-soft); padding: 10px 12px; border-radius: 8px; }
+.mag-detail .info-grid .info .label{ font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.mag-detail .info-grid .info .value{ font-weight: 600; font-size: 14px; margin-top: 2px; }
+.mag-detail .action-tabs{ display:flex; gap:6px; margin-bottom: 14px; }
+.mag-detail .action-tabs button{
+  flex:1; padding: 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg-card); cursor: pointer; font-size: 13px; font-weight: 500;
+}
+.mag-detail .action-tabs button.active{ background: var(--emerald); color: white; border-color: var(--emerald); }
+.mag-detail .history{ margin-top: 16px; }
+.mag-detail .history h4{ font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); margin: 0 0 8px; }
+.mag-detail .hist-row{ display:flex; justify-content:space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.mag-detail .hist-row:last-child{ border-bottom: 0; }
+.mag-detail .hist-row .when{ color: var(--text-muted); font-size: 12px; }
+.mag-detail .hist-row .delta.pos{ color: var(--emerald); font-weight: 600; }
+.mag-detail .hist-row .delta.neg{ color: var(--danger); font-weight: 600; }
+.mag-detail .hist-row .reason{ color: var(--text-muted); font-size: 12px; }
+.mag-detail .modal{ max-width: 560px; }
+
+@media (max-width: 720px){
+  .inv-table table, .inv-table thead, .inv-table tbody, .inv-table th, .inv-table td, .inv-table tr{ display:block; }
+  .inv-table thead{ display:none; }
+  .inv-table tr{ padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .inv-table td{ padding: 2px 0; border-bottom: 0; }
+  .inv-table td::before{ content: attr(data-label) ": "; color: var(--text-muted); font-size:12px; }
+  .inv-table .name-cell::before{ display: none; }
+}
+
+/* ============================================================
    RESPONSIVE — sidebar collassa su tablet < 900px
    ============================================================ */
 @media (max-width: 900px){

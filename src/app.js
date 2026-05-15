@@ -432,7 +432,7 @@ function placeholderPage(main, title, desc){
 function renderKioskPage(main){      placeholderPage(main, "Kiosk self-order", "Modalità auto-ordine per totem cliente."); }
 function renderKdsPage(main){        placeholderPage(main, "KDS retrobanco", "Schermo preparazione ordini in tempo reale."); }
 function renderDashboardPage(main){  placeholderPage(main, "Dashboard", "KPI del giorno, food cost, allarmi magazzino, performance."); }
-function renderMagazzinoPage(main){  placeholderPage(main, "Magazzino", "Giacenze in tempo reale, soglie, inventario settimanale."); }
+// renderMagazzinoPage: vedi sezione MAGAZZINO in fondo al file
 function renderFornitoriPage(main){  placeholderPage(main, "Fornitori", "Anagrafica, ordini automatici via email, ricezione merce."); }
 function renderChiusuraPage(main){   placeholderPage(main, "Chiusura cassa", "Riconciliazione incassi atteso vs reale, export corrispettivi."); }
 function renderMenuClientePage(main){placeholderPage(main, "Menu cliente", "Pagina pubblica menu — accessibile da QR tavolo o link."); }
@@ -879,6 +879,424 @@ function showReceiptModal(order, change){
 function cassaCloseReceipt(){
   const m = document.getElementById("receiptModal");
   if (m) m.remove();
+}
+
+/* ============================================================
+ * MODULO MAGAZZINO
+ * ============================================================
+ * Funzionalità:
+ *  - Lista ingredienti con stato visuale (OK/da riordinare/critico/esaurito)
+ *  - Statistiche aggregate in alto
+ *  - Filtri per stato
+ *  - Modal dettaglio con: carica merce, registra spreco, rettifica
+ *  - Storico movimenti per ingrediente
+ *  - Realtime: si aggiorna automaticamente quando la cassa scala il magazzino
+ * ============================================================ */
+const MAGAZZINO = {
+  ingredients: [],
+  suppliers: {},     // id → riga
+  filter: "all",     // all | low | critical | empty | ok
+  search: "",
+  rtChan: null,
+  detailId: null,
+  detailAction: "purchase",  // purchase | waste | adjustment
+  history: [],
+};
+
+async function renderMagazzinoPage(main){
+  main.innerHTML =
+    '<div class="page-header"><h1>Magazzino</h1><div class="sub muted" id="magSubinfo">Caricamento…</div></div>' +
+    '<div class="stats-row" id="magStats"></div>' +
+    '<div class="filter-bar">' +
+      '<input class="input" id="magSearch" placeholder="Cerca ingrediente…" style="max-width:280px" oninput="magOnSearch(this.value)" />' +
+      '<div id="magFilters" style="display:flex;gap:8px;flex-wrap:wrap"></div>' +
+    '</div>' +
+    '<div class="inv-table" id="magTable"></div>';
+
+  await magLoadAll();
+  magRender();
+  magSubscribeRealtime();
+}
+
+async function magLoadAll(){
+  const orgId = BRIO.org.id;
+  const [ingRes, supRes] = await Promise.all([
+    supa().from("ingredients").select("*").eq("org_id", orgId).eq("active", true).order("name"),
+    supa().from("suppliers").select("id, name").eq("org_id", orgId),
+  ]);
+  if (ingRes.error){ err("[magazzino]", ingRes.error); toast("Errore caricamento", "error"); return; }
+  MAGAZZINO.ingredients = ingRes.data || [];
+  MAGAZZINO.suppliers = {};
+  (supRes.data || []).forEach((s) => { MAGAZZINO.suppliers[s.id] = s; });
+  const sub = document.getElementById("magSubinfo");
+  if (sub) sub.textContent = MAGAZZINO.ingredients.length + " ingredienti";
+}
+
+function magStatus(ing){
+  const stock = Number(ing.stock_qty);
+  if (stock <= 0) return "empty";
+  if (stock <= Number(ing.critical_stock_qty)) return "critical";
+  if (stock <= Number(ing.min_stock_qty)) return "low";
+  return "ok";
+}
+function magStatusLabel(s){
+  return s === "empty" ? "Esaurito"
+       : s === "critical" ? "Critico"
+       : s === "low" ? "Da riordinare"
+       : "OK";
+}
+
+function magRender(){
+  // Stats
+  const all = MAGAZZINO.ingredients;
+  const counts = { all: all.length, ok: 0, low: 0, critical: 0, empty: 0 };
+  all.forEach((i) => { counts[magStatus(i)]++; });
+
+  const statsHost = document.getElementById("magStats");
+  if (statsHost){
+    statsHost.innerHTML =
+      '<div class="stat-card"><div class="stat-label">Totale</div><div class="stat-value">' + counts.all + '</div></div>' +
+      '<div class="stat-card success"><div class="stat-label">OK</div><div class="stat-value">' + counts.ok + '</div></div>' +
+      '<div class="stat-card warn"><div class="stat-label">Da riordinare</div><div class="stat-value">' + counts.low + '</div></div>' +
+      '<div class="stat-card danger"><div class="stat-label">Critico / esaurito</div><div class="stat-value">' + (counts.critical + counts.empty) + '</div></div>';
+  }
+
+  // Filter chips
+  const chips = [
+    { key: "all", label: "Tutti", n: counts.all },
+    { key: "low", label: "Da riordinare", n: counts.low },
+    { key: "critical", label: "Critico", n: counts.critical },
+    { key: "empty", label: "Esaurito", n: counts.empty },
+    { key: "ok", label: "OK", n: counts.ok },
+  ];
+  const fHost = document.getElementById("magFilters");
+  if (fHost){
+    fHost.innerHTML = chips.map((c) => (
+      '<div class="filter-chip ' + (MAGAZZINO.filter === c.key ? "active" : "") + '"' +
+      ' data-action="magSetFilter" data-args=\'["' + c.key + '"]\'>' +
+      escapeHtml(c.label) + '<span class="badge">' + c.n + '</span></div>'
+    )).join("");
+  }
+
+  // Table
+  const tHost = document.getElementById("magTable");
+  if (!tHost) return;
+
+  const q = MAGAZZINO.search.toLowerCase().trim();
+  let list = MAGAZZINO.ingredients;
+  if (MAGAZZINO.filter !== "all"){
+    list = list.filter((i) => magStatus(i) === MAGAZZINO.filter);
+  }
+  if (q){
+    list = list.filter((i) => i.name.toLowerCase().includes(q));
+  }
+
+  if (list.length === 0){
+    tHost.innerHTML = '<div class="muted text-center" style="padding:32px">Nessun ingrediente in questa vista.</div>';
+    return;
+  }
+
+  const rows = list.map((i) => {
+    const s = magStatus(i);
+    const supplier = i.supplier_id ? MAGAZZINO.suppliers[i.supplier_id] : null;
+    return '<tr data-action="magOpenDetail" data-args=\'["' + i.id + '"]\'>' +
+      '<td class="name-cell"><div class="name">' + escapeHtml(i.name) + '</div></td>' +
+      '<td data-label="Giacenza" class="qty">' + numFmt(i.stock_qty, 0) + ' <span class="qty-small">' + escapeHtml(i.unit) + '</span></td>' +
+      '<td data-label="Soglia" class="qty-small">min ' + numFmt(i.min_stock_qty, 0) + ' · crit ' + numFmt(i.critical_stock_qty, 0) + '</td>' +
+      '<td data-label="Costo" class="qty-small">' + euroFmt(i.cost_per_unit_cents) + '/' + escapeHtml(i.unit) + '</td>' +
+      '<td data-label="Fornitore" class="qty-small">' + (supplier ? escapeHtml(supplier.name) : '—') + '</td>' +
+      '<td data-label="Stato"><span class="inv-status ' + s + '"><span class="dot"></span>' + magStatusLabel(s) + '</span></td>' +
+    '</tr>';
+  }).join("");
+
+  tHost.innerHTML =
+    '<table>' +
+      '<thead><tr>' +
+        '<th>Ingrediente</th><th>Giacenza</th><th>Soglie</th><th>Costo</th><th>Fornitore</th><th>Stato</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>';
+}
+
+function magSetFilter(key){ MAGAZZINO.filter = key; magRender(); }
+function magOnSearch(v){ MAGAZZINO.search = v || ""; magRender(); }
+
+// ========================================================
+// REALTIME — si aggiorna quando la cassa scarica magazzino
+// ========================================================
+function magSubscribeRealtime(){
+  if (MAGAZZINO.rtChan) supa().removeChannel(MAGAZZINO.rtChan);
+  MAGAZZINO.rtChan = supa().channel("mag-" + BRIO.org.id)
+    .on("postgres_changes",
+      { event: "*", schema: "public", table: "ingredients", filter: "org_id=eq." + BRIO.org.id },
+      (payload) => {
+        log("[magazzino] realtime update", payload.eventType, payload.new && payload.new.name);
+        if (payload.eventType === "UPDATE" && payload.new){
+          const idx = MAGAZZINO.ingredients.findIndex((i) => i.id === payload.new.id);
+          if (idx >= 0){
+            MAGAZZINO.ingredients[idx] = payload.new;
+            magRender();
+            // Se il modal del dettaglio è aperto su questo ingrediente, aggiorniamolo
+            if (MAGAZZINO.detailId === payload.new.id){
+              magRefreshDetailHeader();
+            }
+          }
+        } else if (payload.eventType === "INSERT" && payload.new){
+          MAGAZZINO.ingredients.push(payload.new);
+          MAGAZZINO.ingredients.sort((a, b) => a.name.localeCompare(b.name));
+          magRender();
+        } else if (payload.eventType === "DELETE" && payload.old){
+          MAGAZZINO.ingredients = MAGAZZINO.ingredients.filter((i) => i.id !== payload.old.id);
+          magRender();
+        }
+      })
+    .subscribe();
+}
+
+// ========================================================
+// MODAL DETTAGLIO INGREDIENTE
+// ========================================================
+async function magOpenDetail(ingredientId){
+  MAGAZZINO.detailId = ingredientId;
+  MAGAZZINO.detailAction = "purchase";
+  // carica ultimi 20 movimenti
+  const { data, error } = await supa()
+    .from("inventory_movements")
+    .select("*")
+    .eq("ingredient_id", ingredientId)
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (error){ err("[magazzino] history", error); }
+  MAGAZZINO.history = data || [];
+  magShowDetailModal();
+}
+
+function magShowDetailModal(){
+  const ing = MAGAZZINO.ingredients.find((i) => i.id === MAGAZZINO.detailId);
+  if (!ing) return;
+  const supplier = ing.supplier_id ? MAGAZZINO.suppliers[ing.supplier_id] : null;
+  const status = magStatus(ing);
+  const action = MAGAZZINO.detailAction;
+
+  const history = MAGAZZINO.history.map((m) => {
+    const cls = Number(m.qty) > 0 ? "pos" : "neg";
+    const sign = Number(m.qty) > 0 ? "+" : "";
+    const typeLabel = ({sale:"vendita",purchase:"carico",waste:"spreco",adjustment:"rettifica",transfer:"trasf."})[m.type] || m.type;
+    return '<div class="hist-row">' +
+      '<div><div>' + escapeHtml(typeLabel) + (m.reason ? ' · <span class="reason">' + escapeHtml(m.reason) + '</span>' : '') + '</div><div class="when">' + dateFmt(m.created_at) + ' ' + timeFmt(m.created_at) + '</div></div>' +
+      '<div class="delta ' + cls + '">' + sign + numFmt(m.qty, 0) + ' ' + escapeHtml(ing.unit) + '</div>' +
+    '</div>';
+  }).join("");
+
+  const actionForm =
+    action === "purchase"
+      ? '<form data-form="magPurchase">' +
+        '<label class="field"><span class="label">Quantità caricata (' + escapeHtml(ing.unit) + ')</span>' +
+          '<input class="input" name="qty" type="number" step="0.01" min="0.01" required placeholder="es. 1000" autofocus />' +
+        '</label>' +
+        '<label class="field"><span class="label">Costo unitario (€/' + escapeHtml(ing.unit) + ') · opzionale</span>' +
+          '<input class="input" name="cost" type="number" step="0.001" min="0" placeholder="' + (Number(ing.cost_per_unit_cents)/100).toFixed(3) + '" />' +
+        '</label>' +
+        '<label class="field"><span class="label">Note · opzionale</span>' +
+          '<input class="input" name="reason" type="text" placeholder="Es. consegna fornitore X" />' +
+        '</label>' +
+        '<button class="btn btn-primary" style="width:100%" type="submit">Carica magazzino</button>' +
+      '</form>'
+      : action === "waste"
+      ? '<form data-form="magWaste">' +
+        '<label class="field"><span class="label">Quantità sprecata (' + escapeHtml(ing.unit) + ')</span>' +
+          '<input class="input" name="qty" type="number" step="0.01" min="0.01" required placeholder="es. 50" autofocus />' +
+        '</label>' +
+        '<label class="field"><span class="label">Motivo</span>' +
+          '<select class="select" name="reason" required>' +
+            '<option value="rotto">Rotto / caduto</option>' +
+            '<option value="scaduto">Scaduto</option>' +
+            '<option value="errore_preparazione">Errore preparazione</option>' +
+            '<option value="cliente_reclamo">Reclamo cliente</option>' +
+            '<option value="altro">Altro</option>' +
+          '</select>' +
+        '</label>' +
+        '<button class="btn btn-danger" style="width:100%" type="submit">Registra spreco</button>' +
+      '</form>'
+      : '<form data-form="magAdjustment">' +
+        '<label class="field"><span class="label">Giacenza reale conteggiata (' + escapeHtml(ing.unit) + ')</span>' +
+          '<input class="input" name="qty" type="number" step="0.01" min="0" required placeholder="' + numFmt(ing.stock_qty, 0) + '" value="' + numFmt(ing.stock_qty, 0).replace(/\./g,"").replace(",",".") + '" autofocus />' +
+        '</label>' +
+        '<div class="muted mb-16" style="font-size:12px">Sistema attualmente: ' + numFmt(ing.stock_qty, 0) + ' ' + escapeHtml(ing.unit) + '. La differenza sarà registrata come rettifica.</div>' +
+        '<label class="field"><span class="label">Motivo · opzionale</span>' +
+          '<input class="input" name="reason" type="text" placeholder="Es. inventario settimanale 15/05" />' +
+        '</label>' +
+        '<button class="btn btn-primary" style="width:100%" type="submit">Aggiorna giacenza</button>' +
+      '</form>';
+
+  document.body.insertAdjacentHTML("beforeend",
+    '<div class="modal-backdrop mag-detail" id="magDetailModal" onclick="if(event.target===this) magCloseDetail()">' +
+      '<div class="modal">' +
+        '<div class="modal-head">' +
+          '<div>' +
+            '<h2>' + escapeHtml(ing.name) + '</h2>' +
+            '<div class="sub muted" style="margin-top:4px;font-size:13px">' +
+              '<span class="inv-status ' + status + '"><span class="dot"></span>' + magStatusLabel(status) + '</span> · ' +
+              '<span id="magHeaderStock">' + numFmt(ing.stock_qty, 0) + ' ' + escapeHtml(ing.unit) + '</span> in giacenza' +
+            '</div>' +
+          '</div>' +
+          '<button class="modal-close" data-action="magCloseDetail">×</button>' +
+        '</div>' +
+        '<div class="modal-body">' +
+          '<div class="info-grid">' +
+            '<div class="info"><div class="label">Unità</div><div class="value">' + escapeHtml(ing.unit) + '</div></div>' +
+            '<div class="info"><div class="label">Costo unitario</div><div class="value">' + euroFmt(ing.cost_per_unit_cents) + '</div></div>' +
+            '<div class="info"><div class="label">Soglia min</div><div class="value">' + numFmt(ing.min_stock_qty, 0) + ' ' + escapeHtml(ing.unit) + '</div></div>' +
+            '<div class="info"><div class="label">Soglia critica</div><div class="value">' + numFmt(ing.critical_stock_qty, 0) + ' ' + escapeHtml(ing.unit) + '</div></div>' +
+            '<div class="info" style="grid-column:1/-1"><div class="label">Fornitore</div><div class="value">' + (supplier ? escapeHtml(supplier.name) : '—') + '</div></div>' +
+          '</div>' +
+          '<div class="action-tabs">' +
+            '<button class="' + (action === "purchase" ? "active" : "") + '" data-action="magSetDetailAction" data-args=\'["purchase"]\'>+ Carica</button>' +
+            '<button class="' + (action === "waste" ? "active" : "") + '" data-action="magSetDetailAction" data-args=\'["waste"]\'>− Spreco</button>' +
+            '<button class="' + (action === "adjustment" ? "active" : "") + '" data-action="magSetDetailAction" data-args=\'["adjustment"]\'>= Rettifica</button>' +
+          '</div>' +
+          actionForm +
+          '<div class="history">' +
+            '<h4>Storico movimenti</h4>' +
+            (history || '<div class="muted" style="font-size:13px;padding:8px 0">Nessun movimento registrato.</div>') +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function magCloseDetail(){
+  MAGAZZINO.detailId = null;
+  const m = document.getElementById("magDetailModal");
+  if (m) m.remove();
+}
+
+function magSetDetailAction(action){
+  MAGAZZINO.detailAction = action;
+  magCloseDetail();
+  // riapriamo il modal (history già caricata)
+  MAGAZZINO.detailId = MAGAZZINO.ingredients.find((i) => i.id) ? MAGAZZINO.detailId : null;
+  // ripristina il detailId che abbiamo perso col reset di magCloseDetail
+  // workaround: usiamo un local
+}
+
+// Override magSetDetailAction with corrected version that preserves detailId
+window.magSetDetailAction = function(action){
+  const id = MAGAZZINO.detailId;
+  MAGAZZINO.detailAction = action;
+  const m = document.getElementById("magDetailModal");
+  if (m) m.remove();
+  MAGAZZINO.detailId = id;
+  magShowDetailModal();
+};
+
+function magRefreshDetailHeader(){
+  const ing = MAGAZZINO.ingredients.find((i) => i.id === MAGAZZINO.detailId);
+  if (!ing) return;
+  const h = document.getElementById("magHeaderStock");
+  if (h) h.textContent = numFmt(ing.stock_qty, 0) + " " + ing.unit;
+}
+
+// ========================================================
+// FORM HANDLERS · carica / spreco / rettifica
+// ========================================================
+async function onMagPurchaseSubmit(form){
+  const qty = parseFloat((form.qty.value || "0").replace(",", "."));
+  const cost = parseFloat((form.cost.value || "0").replace(",", ".")) || 0;
+  const reason = (form.reason.value || "").trim();
+  if (!qty || qty <= 0){ toast("Quantità non valida", "error"); return; }
+
+  const ing = MAGAZZINO.ingredients.find((i) => i.id === MAGAZZINO.detailId);
+  if (!ing) return;
+
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = "Salvataggio…";
+
+  // 1. Update giacenza + eventuale costo unitario
+  const newStock = Number(ing.stock_qty) + qty;
+  const updatePayload = { stock_qty: newStock };
+  if (cost > 0) updatePayload.cost_per_unit_cents = Math.round(cost * 100);
+  const { error: upErr } = await supa().from("ingredients").update(updatePayload).eq("id", ing.id);
+  if (upErr){ err("[magazzino] update", upErr); toast("Errore: " + upErr.message, "error"); btn.disabled = false; btn.textContent = "Carica magazzino"; return; }
+
+  // 2. Registra movimento
+  await supa().from("inventory_movements").insert({
+    org_id: BRIO.org.id,
+    ingredient_id: ing.id,
+    type: "purchase",
+    qty: qty,
+    unit_cost_cents: cost > 0 ? Math.round(cost * 100) : ing.cost_per_unit_cents,
+    reason: reason || null,
+    created_by: BRIO.user.id,
+  });
+
+  toast("Caricato " + numFmt(qty, 0) + " " + ing.unit + " di " + ing.name, "success");
+  // Ricarica history per il modal
+  await magOpenDetail(ing.id);
+}
+
+async function onMagWasteSubmit(form){
+  const qty = parseFloat((form.qty.value || "0").replace(",", "."));
+  const reason = form.reason.value;
+  if (!qty || qty <= 0){ toast("Quantità non valida", "error"); return; }
+
+  const ing = MAGAZZINO.ingredients.find((i) => i.id === MAGAZZINO.detailId);
+  if (!ing) return;
+  if (qty > Number(ing.stock_qty)){
+    if (!confirm("Stai sprecando più di quanto sia in giacenza. Continuare?")) return;
+  }
+
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = "Salvataggio…";
+
+  const newStock = Math.max(0, Number(ing.stock_qty) - qty);
+  const { error: upErr } = await supa().from("ingredients").update({ stock_qty: newStock }).eq("id", ing.id);
+  if (upErr){ err("[magazzino] update", upErr); toast("Errore: " + upErr.message, "error"); btn.disabled = false; btn.textContent = "Registra spreco"; return; }
+
+  await supa().from("inventory_movements").insert({
+    org_id: BRIO.org.id,
+    ingredient_id: ing.id,
+    type: "waste",
+    qty: -qty,
+    unit_cost_cents: ing.cost_per_unit_cents,
+    reason: reason,
+    created_by: BRIO.user.id,
+  });
+
+  toast("Spreco registrato: " + numFmt(qty, 0) + " " + ing.unit, "success");
+  await magOpenDetail(ing.id);
+}
+
+async function onMagAdjustmentSubmit(form){
+  const newQty = parseFloat((form.qty.value || "0").replace(",", "."));
+  const reason = (form.reason.value || "Inventario fisico").trim();
+  if (isNaN(newQty) || newQty < 0){ toast("Valore non valido", "error"); return; }
+
+  const ing = MAGAZZINO.ingredients.find((i) => i.id === MAGAZZINO.detailId);
+  if (!ing) return;
+  const delta = newQty - Number(ing.stock_qty);
+
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true; btn.textContent = "Salvataggio…";
+
+  const { error: upErr } = await supa().from("ingredients").update({ stock_qty: newQty }).eq("id", ing.id);
+  if (upErr){ err("[magazzino] update", upErr); toast("Errore: " + upErr.message, "error"); btn.disabled = false; btn.textContent = "Aggiorna giacenza"; return; }
+
+  if (delta !== 0){
+    await supa().from("inventory_movements").insert({
+      org_id: BRIO.org.id,
+      ingredient_id: ing.id,
+      type: "adjustment",
+      qty: delta,
+      unit_cost_cents: ing.cost_per_unit_cents,
+      reason: reason,
+      created_by: BRIO.user.id,
+    });
+  }
+
+  toast("Giacenza aggiornata a " + numFmt(newQty, 0) + " " + ing.unit + " (Δ " + (delta >= 0 ? "+" : "") + numFmt(delta, 0) + ")", "success");
+  await magOpenDetail(ing.id);
 }
 
 // ========================================================
