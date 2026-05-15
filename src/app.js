@@ -812,36 +812,74 @@ function cassaRenderProducts(){
     return;
   }
   host.innerHTML = list.map((p) => {
-    const unavail = !productAvailable(p);
+    const addable = productMaxAddable(p, CASSA.cart);
+    const maxQty = productMaxQty(p);
+    const unavail = addable <= 0;
+    let badge = "";
+    if (maxQty <= 0) badge = '<div class="stock-badge stock-out">Esaurito</div>';
+    else if (addable <= 0) badge = '<div class="stock-badge stock-out">Limite raggiunto</div>';
+    else if (maxQty < 5) badge = '<div class="stock-badge stock-low">Ultimi ' + maxQty + '</div>';
     return '<div class="product-tile ' + (unavail ? "unavailable" : "") + '"' +
       ' data-action="' + (unavail ? "cassaUnavailable" : "cassaAddToCart") + '" data-args=\'["' + p.id + '"]\'>' +
       (p.shortcut_key ? '<div class="shortcut">' + escapeHtml(p.shortcut_key) + '</div>' : "") +
+      badge +
       '<div class="name">' + escapeHtml(p.name) + '</div>' +
       '<div class="price">' + euroFmt(p.price_cents) + '</div>' +
     '</div>';
   }).join("");
 }
 
-// Un prodotto è disponibile se:
-//  - status === 'available' (no out_of_stock manuale)
-//  - tutti gli ingredienti della ricetta hanno stock_qty > critical_stock_qty
-//    (NB: il check critico è opzionale per MVP, possiamo allargare)
-function productAvailable(p){
-  if (p.status === "out_of_stock" || p.status === "hidden") return false;
-  if (!p.recipes || p.recipes.length === 0) return true; // prodotto senza ricetta: sempre disponibile
+// Calcola QUANTI pezzi di un prodotto sono ancora producibili dato lo stock
+// corrente dei suoi ingredienti. Es: piadina con 60g prosciutto, in magazzino
+// 300g prosciutto → max 5 piadine. Se prodotto senza ricetta: illimitato (9999).
+function productMaxQty(p){
+  if (!p) return 0;
+  if (p.status === "hidden" || p.status === "out_of_stock") return 0;
+  if (!p.recipes || p.recipes.length === 0) return 9999;
+  let min = Infinity;
   for (let i = 0; i < p.recipes.length; i++){
     const r = p.recipes[i];
     if (!r.ingredient) continue;
-    if (Number(r.ingredient.stock_qty) <= Number(r.ingredient.critical_stock_qty)) return false;
+    const recipeQty = Number(r.qty);
+    if (!recipeQty) continue;
+    const stock = Number(r.ingredient.stock_qty) || 0;
+    const possible = Math.floor(stock / recipeQty);
+    if (possible < min) min = possible;
   }
-  return true;
+  return min === Infinity ? 9999 : Math.max(0, min);
 }
 
-function cassaUnavailable(){ toast("Prodotto esaurito", "error"); }
+// Conta quanti pezzi di un prodotto sono già nel carrello (somma di tutte le
+// righe con lo stesso product_id, anche con customizations diverse).
+function cartQtyOfProduct(cart, productId){
+  if (!cart) return 0;
+  let n = 0;
+  for (let i = 0; i < cart.length; i++){
+    if (cart[i].product_id === productId) n += Number(cart[i].qty) || 0;
+  }
+  return n;
+}
+
+// Quanti pezzi del prodotto si possono ancora AGGIUNGERE al carrello
+// (max producibile - già nel carrello).
+function productMaxAddable(p, cart){
+  return Math.max(0, productMaxQty(p) - cartQtyOfProduct(cart, p.id));
+}
+
+// Un prodotto è disponibile se ne possiamo produrre almeno 1 pezzo.
+function productAvailable(p){
+  return productMaxQty(p) > 0;
+}
+
+function cassaUnavailable(){ toast("Prodotto esaurito o limite magazzino raggiunto", "error"); }
 
 function cassaAddToCart(productId){
   const p = CASSA.products.find((x) => x.id === productId);
   if (!p) return;
+  if (productMaxAddable(p, CASSA.cart) <= 0){
+    cassaUnavailable();
+    return;
+  }
   const existing = CASSA.cart.find((c) => c.product_id === productId);
   if (existing){
     existing.qty += 1;
@@ -855,15 +893,28 @@ function cassaAddToCart(productId){
     });
   }
   cassaRenderCart();
+  cassaRenderProducts(); // aggiorna badge "Ultimi N" / "Limite raggiunto"
 }
 
-function cassaIncQty(idx){ CASSA.cart[idx].qty += 1; cassaRenderCart(); }
+function cassaIncQty(idx){
+  const row = CASSA.cart[idx];
+  if (!row) return;
+  const p = CASSA.products.find((x) => x.id === row.product_id);
+  if (p && productMaxAddable(p, CASSA.cart) <= 0){
+    cassaUnavailable();
+    return;
+  }
+  row.qty += 1;
+  cassaRenderCart();
+  cassaRenderProducts();
+}
 function cassaDecQty(idx){
   CASSA.cart[idx].qty -= 1;
   if (CASSA.cart[idx].qty <= 0) CASSA.cart.splice(idx, 1);
   cassaRenderCart();
+  cassaRenderProducts();
 }
-function cassaRemoveRow(idx){ CASSA.cart.splice(idx, 1); cassaRenderCart(); }
+function cassaRemoveRow(idx){ CASSA.cart.splice(idx, 1); cassaRenderCart(); cassaRenderProducts(); }
 async function cassaClearCart(){
   if (CASSA.cart.length === 0) return;
   const ok = await brioConfirm({
@@ -1080,11 +1131,23 @@ async function cassaConfirmOrder(){
     CASSA.saving = false; return;
   }
 
-  // 3) UPDATE order a 'paid' → fa scattare il trigger che scarica magazzino + registra movimenti
+  // 3) UPDATE order a 'paid' → fa scattare il trigger che scarica magazzino + registra movimenti.
+  //    Se il trigger DB rileva magazzino insufficiente, raise exception → cleanup ordine pending.
   const { error: payErr } = await supa()
     .from("orders").update({ status: "paid" }).eq("id", ord.id);
   if (payErr){
     err("[cassa] update paid", payErr);
+    const msg = (payErr.message || "").toLowerCase();
+    if (msg.includes("magazzino insufficiente")){
+      // cleanup: cancella ordine + items pending per non lasciare spazzatura
+      await supa().from("order_items").delete().eq("order_id", ord.id);
+      await supa().from("orders").delete().eq("id", ord.id);
+      toast("Magazzino insufficiente: " + payErr.message, "error");
+      CASSA.saving = false;
+      await cassaLoadData();
+      cassaRenderProducts();
+      return;
+    }
     toast("Ordine salvato ma errore pagamento: " + payErr.message, "error");
   }
 
@@ -1381,13 +1444,19 @@ function kioskRenderMenu(){
   )).join("");
 
   const products = (KIOSK.byCat[KIOSK.activeCatId] || []).map((p) => {
-    const avail = kioskProductAvailable(p);
+    const maxQty = productMaxQty(p);
+    const addable = productMaxAddable(p, KIOSK.cart);
+    const avail = addable > 0;
     const photo = p.image_url
       ? '<div class="photo-area" style="background-image:url(\'' + escapeHtml(p.image_url) + '\');background-size:cover;background-position:center"></div>'
       : '<div class="photo-area">' + kioskProductEmoji(p) + '</div>';
+    let stockBadge = "";
+    if (maxQty <= 0) stockBadge = '<div class="kiosk-stock-badge out">Esaurito</div>';
+    else if (addable <= 0) stockBadge = '<div class="kiosk-stock-badge out">Limite</div>';
+    else if (maxQty < 5) stockBadge = '<div class="kiosk-stock-badge low">Ultimi ' + maxQty + '</div>';
     return '<div class="kiosk-product ' + (avail ? "" : "unavailable") + '"' +
       ' data-action="' + (avail ? "kioskOnProductTap" : "noop") + '" data-args=\'["' + p.id + '"]\'>' +
-      photo +
+      photo + stockBadge +
       '<div>' +
         '<div class="name">' + escapeHtml(p.name) + '</div>' +
         '<div class="desc">' + escapeHtml(p.description || "") + '</div>' +
@@ -1673,14 +1742,7 @@ function kioskRenderSuccess(){
 }
 
 function kioskProductAvailable(p){
-  if (p.status === "out_of_stock" || p.status === "hidden") return false;
-  if (!p.recipes || p.recipes.length === 0) return true;
-  for (let i = 0; i < p.recipes.length; i++){
-    const r = p.recipes[i];
-    if (!r.ingredient) continue;
-    if (Number(r.ingredient.stock_qty) <= Number(r.ingredient.critical_stock_qty)) return false;
-  }
-  return true;
+  return productMaxAddable(p, KIOSK.cart) > 0;
 }
 
 function kioskProductEmoji(p){
@@ -1779,6 +1841,11 @@ function kioskConfirmPersonalize(){
 // Items con customizations diverse sono righe separate (non incrementa qty).
 function kioskAddToCart(p, customizations){
   customizations = customizations || [];
+  // Stock check: se non possiamo aggiungerne più, blocca
+  if (productMaxAddable(p, KIOSK.cart) <= 0){
+    toast("Prodotto esaurito", "error");
+    return;
+  }
   const extra = customizations.reduce((a, c) => a + Number(c.price_delta_cents || 0), 0);
   const unitPrice = Number(p.price_cents) + extra;
   const customKey = customizations.map((c) => c.label).sort().join("|");
@@ -1805,7 +1872,18 @@ function kioskAddToCart(p, customizations){
   kioskRender();
 }
 
-function kioskIncQty(idx){ KIOSK.cart[idx].qty += 1; kioskPersistCart(); kioskRender(); }
+function kioskIncQty(idx){
+  const row = KIOSK.cart[idx];
+  if (!row) return;
+  const p = (KIOSK.products || []).find((x) => x.id === row.product_id);
+  if (p && productMaxAddable(p, KIOSK.cart) <= 0){
+    toast("Prodotto esaurito", "error");
+    return;
+  }
+  row.qty += 1;
+  kioskPersistCart();
+  kioskRender();
+}
 function kioskDecQty(idx){
   KIOSK.cart[idx].qty -= 1;
   if (KIOSK.cart[idx].qty <= 0) KIOSK.cart.splice(idx, 1);
@@ -1909,10 +1987,20 @@ async function kioskCreateOrder(paid){
   const { error: itErr } = await supa().from("order_items").insert(items);
   if (itErr){ err("[kiosk] items", itErr); toast("Errore voci ordine", "error"); return null; }
 
-  // Se "Paga qui", marca pagato → trigger DB scarica magazzino + registra transaction
+  // Se "Paga qui", marca pagato → trigger DB scarica magazzino + registra transaction.
+  // Se il trigger blocca per magazzino insufficiente, cleanup ordine pending + toast.
   if (paid){
     const { error: upErr } = await supa().from("orders").update({ status: "paid" }).eq("id", ord.id);
-    if (upErr) err("[kiosk] update paid", upErr);
+    if (upErr){
+      err("[kiosk] update paid", upErr);
+      const msg = (upErr.message || "").toLowerCase();
+      if (msg.includes("magazzino insufficiente")){
+        await supa().from("order_items").delete().eq("order_id", ord.id);
+        await supa().from("orders").delete().eq("id", ord.id);
+        toast("Prodotto esaurito: " + upErr.message, "error");
+        return null;
+      }
+    }
     // Registra transaction (registro cassa)
     await supa().from("transactions").insert({
       org_id: BRIO.org.id,

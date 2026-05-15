@@ -387,7 +387,14 @@ main#appContent{
   border-radius: 4px; font-weight: 500;
 }
 .product-tile.unavailable{ opacity: .4; cursor: not-allowed; }
-.product-tile.unavailable .price::after{ content: " · esaurito"; color: var(--danger); font-weight: 400; font-size:12px; }
+.product-tile .stock-badge{
+  position: absolute; top: 8px; left: 8px;
+  font-size: 10px; padding: 3px 7px;
+  border-radius: 4px; font-weight: 600;
+  letter-spacing: .02em; text-transform: uppercase;
+}
+.product-tile .stock-badge.stock-low{ background: rgba(245,158,11,.18); color: #B45309; }
+.product-tile .stock-badge.stock-out{ background: rgba(220,38,38,.12); color: var(--danger); }
 
 /* Carrello */
 .cassa-cart{
@@ -690,6 +697,13 @@ main#appContent{
   padding: 4px 10px; border-radius: 999px;
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
 }
+.kiosk-product .kiosk-stock-badge{
+  position: absolute; top: 12px; left: 12px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+}
+.kiosk-product .kiosk-stock-badge.low{ background: #FEF3C7; color: #B45309; }
+.kiosk-product .kiosk-stock-badge.out{ background: #FEE2E2; color: var(--danger); }
 
 /* CARRELLO kiosk */
 .kiosk-cart{
