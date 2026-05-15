@@ -384,6 +384,7 @@ const ROUTES = {
   "#/kds":        { name: "kds",        render: renderKdsPage },
   "#/dashboard":  { name: "dashboard",  adminOnly: true, render: renderDashboardPage },
   "#/magazzino":  { name: "magazzino",  managerUp: true, render: renderMagazzinoPage },
+  "#/menu-admin": { name: "menu-admin", managerUp: true, render: renderMenuAdminPage },
   "#/fornitori":  { name: "fornitori",  managerUp: true, render: renderFornitoriPage },
   "#/chiusura":   { name: "chiusura",   managerUp: true, render: renderChiusuraPage },
   "#/menu":       { name: "menu",       public: true, fullscreen: true, render: renderMenuClientePage },
@@ -441,6 +442,7 @@ function renderChrome(root){
     { hash: "#/cassa",     icon: "💳", label: "Cassa",      show: () => true },
     { hash: "#/kds",       icon: "🍳", label: "KDS",        show: () => true },
     { hash: "#/kiosk",     icon: "📱", label: "Kiosk",      show: () => canManage() },
+    { hash: "#/menu-admin", icon: "🍽️", label: "Menu",     show: () => canManage() },
     { hash: "#/magazzino", icon: "📦", label: "Magazzino",  show: () => canManage() },
     { hash: "#/fornitori", icon: "🚚", label: "Fornitori",  show: () => canManage() },
     { hash: "#/dashboard", icon: "📊", label: "Dashboard",  show: () => isAdmin() },
@@ -539,6 +541,7 @@ async function renderHomePage(main){
     { hash: "#/cassa",     icon: "💳", title: "Cassa",      desc: "Batti ordini, incassa, stampa scontrino", show: () => true },
     { hash: "#/kds",       icon: "🍳", title: "KDS",        desc: "Schermo preparazione ordini",            show: () => true },
     { hash: "#/kiosk",     icon: "📱", title: "Kiosk",      desc: "Auto-ordine cliente al totem",           show: () => canManage() },
+    { hash: "#/menu-admin", icon: "🍽️", title: "Menu",      desc: "Gestione prodotti, ricette e prezzi",    show: () => canManage() },
     { hash: "#/magazzino", icon: "📦", title: "Magazzino",  desc: "Giacenze real-time + soglie",            show: () => canManage() },
     { hash: "#/fornitori", icon: "🚚", title: "Fornitori",  desc: "Ordini automatici e anagrafica",         show: () => canManage() },
     { hash: "#/dashboard", icon: "📊", title: "Dashboard",  desc: "KPI giorno, food cost, allarmi",         show: () => isAdmin() },
@@ -667,7 +670,7 @@ function placeholderPage(main, title, desc){
 
 // renderCassaPage: vedi sezione CASSA in fondo al file
 // renderKioskPage: vedi sezione KIOSK in fondo al file
-function renderKdsPage(main){        placeholderPage(main, "KDS retrobanco", "Schermo preparazione ordini in tempo reale."); }
+// renderKdsPage: vedi sezione KDS in fondo al file
 function renderDashboardPage(main){  placeholderPage(main, "Dashboard", "KPI del giorno, food cost, allarmi magazzino, performance."); }
 // renderMagazzinoPage: vedi sezione MAGAZZINO in fondo al file
 function renderFornitoriPage(main){  placeholderPage(main, "Fornitori", "Anagrafica, ordini automatici via email, ricezione merce."); }
@@ -2010,6 +2013,790 @@ async function kioskCornerTap(){
 function noop(){}
 
 /* ============================================================
+ * MODULO KDS · schermo retrobanco
+ * ============================================================
+ * Mostra in tempo reale gli ordini attivi raggruppati per stato:
+ *   - Da incassare (kiosk pending): solo visualizzazione, cassa li converte
+ *   - In coda (paid): tap "Inizia" → preparing
+ *   - In preparazione (preparing): tap "Pronto" → ready (notifica visiva al cliente)
+ *   - Pronti (ready): tap "Consegnato" → delivered (sparisce dal KDS)
+ * Realtime via Supabase channel su orders.
+ * Timer per ogni card con soglie giallo/rosso (>2m/>4m in coda).
+ * ============================================================ */
+const KDS = {
+  orders: [],     // tutti gli ordini attivi della giornata
+  rtChan: null,
+  tickHandle: null,  // setInterval per aggiornare i timer
+};
+
+async function renderKdsPage(main){
+  main.innerHTML =
+    '<div class="page-header"><h1>KDS · Cucina</h1><div class="sub muted" id="kdsSub">Caricamento…</div></div>' +
+    '<div class="kds-bar" id="kdsBar"></div>' +
+    '<div id="kdsBody"></div>';
+
+  await kdsLoadOrders();
+  kdsRender();
+  kdsSubscribeRealtime();
+
+  // Re-render timer ogni 10s (per aggiornare "X min" e soglie colore)
+  if (KDS.tickHandle) clearInterval(KDS.tickHandle);
+  KDS.tickHandle = setInterval(() => {
+    if (location.hash !== "#/kds"){ clearInterval(KDS.tickHandle); return; }
+    kdsRender();
+  }, 10000);
+}
+
+async function kdsLoadOrders(){
+  const orgId = BRIO.org.id;
+  // Carica ordini di OGGI in stato attivo (non delivered/cancelled)
+  const { data, error } = await supa()
+    .from("orders")
+    .select("id, daily_number, status, channel, total_cents, payment_method, notes, created_at, prep_started_at, ready_at, order_items(id, qty, product_name, customizations, notes, kds_status)")
+    .eq("org_id", orgId)
+    .eq("daily_date", localDateStr())
+    .in("status", ["pending","paid","preparing","ready"])
+    .order("created_at", { ascending: true });
+  if (error){ err("[kds]", error); toast("Errore caricamento KDS", "error"); return; }
+  KDS.orders = data || [];
+  const sub = document.getElementById("kdsSub");
+  if (sub) sub.textContent = KDS.orders.length + " ordini attivi · " + dateFmt(new Date());
+}
+
+function kdsRender(){
+  const bar = document.getElementById("kdsBar");
+  const body = document.getElementById("kdsBody");
+  if (!bar || !body) return;
+
+  // Raggruppa: pending (kiosk awaiting pay) | paid/queued | preparing | ready
+  const pending = KDS.orders.filter((o) => o.status === "pending" && o.channel === "kiosk");
+  const queued  = KDS.orders.filter((o) => o.status === "paid");
+  const prep    = KDS.orders.filter((o) => o.status === "preparing");
+  const ready   = KDS.orders.filter((o) => o.status === "ready");
+
+  bar.innerHTML =
+    (pending.length ? '<div class="kds-stat warn"><span class="num">' + pending.length + '</span> da incassare</div>' : '') +
+    '<div class="kds-stat info"><span class="num">' + queued.length + '</span> in coda</div>' +
+    '<div class="kds-stat info"><span class="num">' + prep.length + '</span> in preparazione</div>' +
+    '<div class="kds-stat success"><span class="num">' + ready.length + '</span> pronti</div>';
+
+  body.innerHTML =
+    (pending.length > 0
+      ? '<div class="kds-section">' +
+          '<h3>🧾 Da incassare alla cassa <span class="badge">' + pending.length + '</span></h3>' +
+          '<div class="kds-grid">' + pending.map((o) => kdsCard(o, "pending-pay")).join("") + '</div>' +
+        '</div>'
+      : '') +
+    '<div class="kds-section">' +
+      '<h3>⏳ In coda <span class="badge">' + queued.length + '</span></h3>' +
+      (queued.length > 0
+        ? '<div class="kds-grid">' + queued.map((o) => kdsCard(o, "queued")).join("") + '</div>'
+        : '<div class="kds-empty">Nessun ordine in coda.</div>'
+      ) +
+    '</div>' +
+    '<div class="kds-section">' +
+      '<h3>🔥 In preparazione <span class="badge">' + prep.length + '</span></h3>' +
+      (prep.length > 0
+        ? '<div class="kds-grid">' + prep.map((o) => kdsCard(o, "preparing")).join("") + '</div>'
+        : '<div class="kds-empty">Niente in preparazione.</div>'
+      ) +
+    '</div>' +
+    (ready.length > 0
+      ? '<div class="kds-section">' +
+          '<h3>✅ Pronti per il cliente <span class="badge">' + ready.length + '</span></h3>' +
+          '<div class="kds-grid">' + ready.map((o) => kdsCard(o, "ready")).join("") + '</div>' +
+        '</div>'
+      : '');
+}
+
+function kdsCard(order, kind){
+  // Calcola elapsed
+  const startRef = (kind === "preparing" && order.prep_started_at) ? order.prep_started_at
+                 : (kind === "ready" && order.ready_at) ? order.ready_at
+                 : order.created_at;
+  const elapsedSec = Math.floor((Date.now() - new Date(startRef).getTime()) / 1000);
+  const elapsed = elapsedSec < 60 ? elapsedSec + "s"
+                : elapsedSec < 3600 ? Math.floor(elapsedSec/60) + "m " + (elapsedSec%60) + "s"
+                : Math.floor(elapsedSec/3600) + "h " + Math.floor((elapsedSec%3600)/60) + "m";
+
+  // Soglia colore solo per "queued"
+  let warnClass = "";
+  if (kind === "queued"){
+    if (elapsedSec > 240) warnClass = " danger";
+    else if (elapsedSec > 120) warnClass = " warn";
+  }
+
+  const channelLabel = ({cassa:"🛒 Cassa", kiosk:"📱 Kiosk", menu_qr:"📲 QR", ahead:"⏱ Anticipo"})[order.channel] || order.channel;
+  const items = (order.order_items || []).map((it) => {
+    const customs = Array.isArray(it.customizations) && it.customizations.length > 0
+      ? '<span class="custom">— ' + it.customizations.map((c) => escapeHtml(c.label)).join(" · ") + '</span>'
+      : '';
+    const noteRow = it.notes ? '<span class="custom">— ' + escapeHtml(it.notes) + '</span>' : '';
+    return '<li><span class="qty-badge">' + it.qty + '×</span>' + escapeHtml(it.product_name) + customs + noteRow + '</li>';
+  }).join("");
+
+  const note = order.notes ? '<div class="note">📝 ' + escapeHtml(order.notes) + '</div>' : '';
+
+  let action = '';
+  if (kind === "queued"){
+    action = '<button class="act" data-action="kdsStartPrep" data-args=\'["' + order.id + '"]\'>▶ Inizia</button>';
+  } else if (kind === "preparing"){
+    action = '<button class="act" data-action="kdsMarkReady" data-args=\'["' + order.id + '"]\'>✓ Pronto</button>';
+  } else if (kind === "ready"){
+    action = '<button class="act" data-action="kdsMarkDelivered" data-args=\'["' + order.id + '"]\'>📦 Consegnato</button>';
+  } else if (kind === "pending-pay"){
+    action = '<div class="info-msg">Pagamento in cassa</div>';
+  }
+
+  return (
+    '<div class="kds-card ' + kind + warnClass + '">' +
+      '<div class="top">' +
+        '<div class="num">#' + order.daily_number + '</div>' +
+        '<div class="ch">' + channelLabel + '</div>' +
+      '</div>' +
+      '<ul class="items">' + items + '</ul>' +
+      note +
+      '<div class="foot">' +
+        '<div class="timer">⏱ ' + elapsed + '</div>' +
+        (kind === "pending-pay" ? '<div class="timer">€ ' + (Number(order.total_cents)/100).toFixed(2).replace(".",",") + '</div>' : action) +
+      '</div>' +
+    '</div>'
+  );
+}
+
+async function kdsStartPrep(orderId){
+  const { error } = await supa().from("orders").update({ status: "preparing", prep_started_at: new Date().toISOString() }).eq("id", orderId);
+  if (error){ toast("Errore: " + error.message, "error"); return; }
+  await kdsLoadOrders();
+  kdsRender();
+}
+async function kdsMarkReady(orderId){
+  const { error } = await supa().from("orders").update({ status: "ready", ready_at: new Date().toISOString() }).eq("id", orderId);
+  if (error){ toast("Errore: " + error.message, "error"); return; }
+  await kdsLoadOrders();
+  kdsRender();
+  // Audio beep (browser semplice via Web Audio)
+  kdsBeep();
+}
+async function kdsMarkDelivered(orderId){
+  const { error } = await supa().from("orders").update({ status: "delivered", delivered_at: new Date().toISOString() }).eq("id", orderId);
+  if (error){ toast("Errore: " + error.message, "error"); return; }
+  await kdsLoadOrders();
+  kdsRender();
+}
+
+function kdsBeep(){
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = 880; g.gain.value = 0.15;
+    o.start(); o.stop(ctx.currentTime + 0.18);
+  } catch(e){ /* ignore */ }
+}
+
+function kdsSubscribeRealtime(){
+  if (KDS.rtChan) supa().removeChannel(KDS.rtChan);
+  KDS.rtChan = supa().channel("kds-" + BRIO.org.id)
+    .on("postgres_changes",
+      { event: "*", schema: "public", table: "orders", filter: "org_id=eq." + BRIO.org.id },
+      async () => { await kdsLoadOrders(); kdsRender(); })
+    .on("postgres_changes",
+      { event: "*", schema: "public", table: "order_items" },
+      async () => { await kdsLoadOrders(); kdsRender(); })
+    .subscribe();
+}
+
+/* ============================================================
+ * MODULO MENU ADMIN · CRUD prodotti, categorie, ricette
+ * ============================================================
+ * Permette di:
+ *  - Creare/modificare/eliminare prodotti del menu
+ *  - Gestire categorie
+ *  - Definire la ricetta (ingredienti + quantità) per ogni prodotto
+ *  - Definire customizations (toggle/extra con prezzo)
+ *  - Vedere food cost % calcolato dalla ricetta
+ * ============================================================ */
+const MA = {
+  tab: "prodotti",      // prodotti | categorie
+  categories: [],
+  products: [],
+  ingredients: [],
+  search: "",
+  catFilter: "",
+  detailProduct: null,
+  draftCustoms: [],
+  draftRecipe: [],
+  draftCatDetail: null,
+};
+
+async function renderMenuAdminPage(main){
+  main.innerHTML =
+    '<div class="page-header"><h1>Menu</h1><div class="sub muted" id="maSub">Caricamento…</div></div>' +
+    '<div class="ma-tabs">' +
+      '<button class="ma-tab" data-action="maSwitch" data-args=\'["prodotti"]\'>Prodotti</button>' +
+      '<button class="ma-tab" data-action="maSwitch" data-args=\'["categorie"]\'>Categorie</button>' +
+    '</div>' +
+    '<div id="maBody"></div>';
+
+  await maLoadAll();
+  maRender();
+}
+
+async function maLoadAll(){
+  const orgId = BRIO.org.id;
+  const [catRes, prodRes, ingRes] = await Promise.all([
+    supa().from("categories").select("*").eq("org_id", orgId).order("sort_order"),
+    supa().from("products").select("*, recipes(id, qty, ingredient:ingredients(id, name, unit, cost_per_unit_cents))").eq("org_id", orgId).order("sort_order"),
+    supa().from("ingredients").select("id, name, unit, cost_per_unit_cents").eq("org_id", orgId).eq("active", true).order("name"),
+  ]);
+  if (catRes.error){ err("[menu-admin]", catRes.error); toast("Errore caricamento", "error"); return; }
+  MA.categories = catRes.data || [];
+  MA.products = prodRes.data || [];
+  MA.ingredients = ingRes.data || [];
+  const sub = document.getElementById("maSub");
+  if (sub) sub.textContent = MA.products.length + " prodotti · " + MA.categories.length + " categorie · " + MA.ingredients.length + " ingredienti";
+}
+
+function maSwitch(tab){
+  MA.tab = tab;
+  maRender();
+}
+
+function maRender(){
+  // Aggiorna stato attivo dei tab
+  $$(".ma-tab").forEach((b) => {
+    const args = b.getAttribute("data-args");
+    const isActive = args && args.indexOf('"' + MA.tab + '"') >= 0;
+    b.classList.toggle("active", !!isActive);
+  });
+
+  const body = document.getElementById("maBody");
+  if (!body) return;
+  body.innerHTML = MA.tab === "prodotti" ? maRenderProducts() : maRenderCategories();
+}
+
+// ===== PRODOTTI =====
+function maRenderProducts(){
+  const q = MA.search.toLowerCase();
+  const filtered = MA.products.filter((p) => {
+    if (MA.catFilter && p.category_id !== MA.catFilter) return false;
+    if (q && !p.name.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
+  const catOptions = '<option value="">Tutte le categorie</option>' +
+    MA.categories.map((c) => '<option value="' + c.id + '"' + (MA.catFilter === c.id ? " selected" : "") + '>' + escapeHtml(c.name) + '</option>').join("");
+
+  const rows = filtered.map((p) => {
+    const cat = MA.categories.find((c) => c.id === p.category_id);
+    const fc = productFoodCost(p);
+    const fcCls = fc.percent <= 30 ? "ok" : fc.percent <= 35 ? "warn" : "danger";
+    return '<tr data-action="maOpenProduct" data-args=\'["' + p.id + '"]\'>' +
+      '<td class="ico">' + maProductIcon(p) + '</td>' +
+      '<td><div class="name">' + escapeHtml(p.name) + '</div><div class="sub">' + escapeHtml(p.sku || "") + (p.shortcut_key ? ' · ⌨ ' + escapeHtml(p.shortcut_key) : '') + '</div></td>' +
+      '<td>' + escapeHtml(cat ? cat.name : "—") + '</td>' +
+      '<td class="price">' + euroFmt(p.price_cents) + '<div class="vat">IVA ' + numFmt(p.vat_rate, 0) + '%</div></td>' +
+      '<td class="fc ' + fcCls + '">' + (fc.percent !== null ? numFmt(fc.percent, 1) + '%' : '—') + '<div class="sub">' + (fc.cost !== null ? euroFmt(fc.cost) : '') + '</div></td>' +
+      '<td><span class="status-chip ' + p.status + '">' + maStatusLabel(p.status) + '</span></td>' +
+    '</tr>';
+  }).join("");
+
+  return (
+    '<div class="ma-toolbar">' +
+      '<input class="input" placeholder="Cerca prodotto…" value="' + escapeHtml(MA.search) + '" oninput="maOnSearch(this.value)" />' +
+      '<select class="select" onchange="maOnCatFilter(this.value)">' + catOptions + '</select>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn btn-primary" data-action="maNewProduct">+ Nuovo prodotto</button>' +
+    '</div>' +
+    '<div class="ma-table">' +
+      (filtered.length === 0
+        ? '<div class="muted text-center" style="padding:32px">Nessun prodotto trovato.</div>'
+        : '<table>' +
+            '<thead><tr><th></th><th>Prodotto</th><th>Categoria</th><th>Prezzo</th><th>Food cost</th><th>Stato</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+          '</table>'
+      ) +
+    '</div>'
+  );
+}
+
+function maOnSearch(v){ MA.search = v || ""; maRender(); }
+function maOnCatFilter(v){ MA.catFilter = v || ""; maRender(); }
+
+function maStatusLabel(s){
+  return s === "available" ? "Attivo" : s === "out_of_stock" ? "Esaurito" : s === "limited" ? "Limitato" : s === "hidden" ? "Nascosto" : s;
+}
+
+function maProductIcon(p){
+  // Reusa logica del kiosk per coerenza
+  if (typeof kioskProductEmoji === "function") return kioskProductEmoji(p);
+  return "🍽";
+}
+
+// Calcola food cost di un prodotto dalla ricetta
+function productFoodCost(p){
+  if (!p.recipes || p.recipes.length === 0) return { cost: null, percent: null };
+  let cost = 0;
+  for (const r of p.recipes){
+    if (!r.ingredient) continue;
+    cost += Number(r.qty) * Number(r.ingredient.cost_per_unit_cents);
+  }
+  const price = Number(p.price_cents) || 0;
+  const percent = price > 0 ? (cost / price) * 100 : 0;
+  return { cost: Math.round(cost), percent };
+}
+
+// ===== MODAL DETTAGLIO PRODOTTO =====
+function maNewProduct(){
+  MA.detailProduct = {
+    _new: true,
+    name: "",
+    description: "",
+    category_id: MA.categories.length > 0 ? MA.categories[0].id : "",
+    price_cents: 0,
+    vat_rate: 10,
+    image_url: "",
+    sku: "",
+    status: "available",
+    shortcut_key: "",
+    tags: [],
+    customizations: [],
+  };
+  MA.draftCustoms = [];
+  MA.draftRecipe = [];
+  maShowDetailModal();
+}
+
+function maOpenProduct(productId){
+  const p = MA.products.find((x) => x.id === productId);
+  if (!p) return;
+  MA.detailProduct = Object.assign({}, p);
+  MA.draftCustoms = Array.isArray(p.customizations) ? JSON.parse(JSON.stringify(p.customizations)) : [];
+  MA.draftRecipe = Array.isArray(p.recipes)
+    ? p.recipes.filter((r) => r.ingredient).map((r) => ({
+        id: r.id,
+        ingredient_id: r.ingredient.id,
+        ingredient_name: r.ingredient.name,
+        unit: r.ingredient.unit,
+        cost_per_unit_cents: r.ingredient.cost_per_unit_cents,
+        qty: Number(r.qty),
+      }))
+    : [];
+  maShowDetailModal();
+}
+
+function maShowDetailModal(){
+  const p = MA.detailProduct;
+  if (!p) return;
+  const isNew = !!p._new;
+
+  const catOpts = MA.categories.map((c) => '<option value="' + c.id + '"' + (c.id === p.category_id ? " selected" : "") + '>' + escapeHtml(c.name) + '</option>').join("");
+
+  const customRows = MA.draftCustoms.map((c, i) => (
+    '<div class="cust-row">' +
+      '<input type="text" placeholder="Etichetta" value="' + escapeHtml(c.label || "") + '" oninput="maCustEdit(' + i + ',\'label\',this.value)" />' +
+      '<select onchange="maCustEdit(' + i + ',\'type\',this.value)">' +
+        '<option value="toggle"' + (c.type === "toggle" ? " selected" : "") + '>Toggle</option>' +
+        '<option value="extra"' + (c.type === "extra" ? " selected" : "") + '>Extra</option>' +
+      '</select>' +
+      '<input type="number" step="0.01" min="0" placeholder="0,00" value="' + (c.price_delta_cents ? (Number(c.price_delta_cents)/100).toFixed(2) : "") + '" oninput="maCustEdit(' + i + ',\'price_delta_cents\',this.value)" />' +
+      '<button class="x" data-action="maCustRemove" data-args="[' + i + ']" title="Rimuovi">×</button>' +
+    '</div>'
+  )).join("");
+
+  const recipeRows = MA.draftRecipe.map((r, i) => (
+    '<div class="rec-row">' +
+      '<select onchange="maRecipeEdit(' + i + ',\'ingredient_id\',this.value)">' +
+        MA.ingredients.map((ing) => '<option value="' + ing.id + '"' + (ing.id === r.ingredient_id ? " selected" : "") + '>' + escapeHtml(ing.name) + '</option>').join("") +
+      '</select>' +
+      '<input type="number" step="0.01" min="0" placeholder="Qty" value="' + r.qty + '" oninput="maRecipeEdit(' + i + ',\'qty\',this.value)" />' +
+      '<div class="unit">' + escapeHtml(r.unit || "") + '</div>' +
+      '<button class="x" data-action="maRecipeRemove" data-args="[' + i + ']" title="Rimuovi">×</button>' +
+    '</div>'
+  )).join("");
+
+  // Calcola food cost dalla ricetta draft
+  let draftCost = 0;
+  MA.draftRecipe.forEach((r) => {
+    const ing = MA.ingredients.find((x) => x.id === r.ingredient_id);
+    if (ing) draftCost += Number(r.qty) * Number(ing.cost_per_unit_cents);
+  });
+  const draftPrice = Number(p.price_cents) || 0;
+  const draftFcPercent = draftPrice > 0 ? (draftCost / draftPrice) * 100 : 0;
+  const fcCls = draftFcPercent <= 30 ? "ok" : draftFcPercent <= 35 ? "warn" : "danger";
+
+  document.body.insertAdjacentHTML("beforeend",
+    '<div class="modal-backdrop ma-detail" id="maDetailModal" onclick="if(event.target===this) maCloseDetail()">' +
+      '<div class="modal">' +
+        '<div class="modal-head">' +
+          '<h2>' + (isNew ? "Nuovo prodotto" : escapeHtml(p.name)) + '</h2>' +
+          '<button class="modal-close" data-action="maCloseDetail">×</button>' +
+        '</div>' +
+        '<div class="modal-body">' +
+          '<div class="grid2">' +
+            '<label class="field"><span class="label">Nome *</span>' +
+              '<input id="maName" class="input" value="' + escapeHtml(p.name) + '" />' +
+            '</label>' +
+            '<label class="field"><span class="label">SKU</span>' +
+              '<input id="maSku" class="input" value="' + escapeHtml(p.sku || "") + '" placeholder="CAF-001" />' +
+            '</label>' +
+          '</div>' +
+          '<label class="field"><span class="label">Descrizione</span>' +
+            '<input id="maDesc" class="input" value="' + escapeHtml(p.description || "") + '" />' +
+          '</label>' +
+          '<div class="grid3">' +
+            '<label class="field"><span class="label">Categoria *</span>' +
+              '<select id="maCat" class="select">' + catOpts + '</select>' +
+            '</label>' +
+            '<label class="field"><span class="label">Prezzo (€) *</span>' +
+              '<input id="maPrice" class="input" type="number" step="0.01" min="0" value="' + (Number(p.price_cents)/100).toFixed(2) + '" />' +
+            '</label>' +
+            '<label class="field"><span class="label">IVA (%)</span>' +
+              '<select id="maVat" class="select">' +
+                '<option value="10"' + (Number(p.vat_rate) === 10 ? " selected" : "") + '>10%</option>' +
+                '<option value="22"' + (Number(p.vat_rate) === 22 ? " selected" : "") + '>22%</option>' +
+                '<option value="4"' + (Number(p.vat_rate) === 4 ? " selected" : "") + '>4%</option>' +
+                '<option value="0"' + (Number(p.vat_rate) === 0 ? " selected" : "") + '>0% (esente)</option>' +
+              '</select>' +
+            '</label>' +
+          '</div>' +
+          '<div class="grid3">' +
+            '<label class="field"><span class="label">Stato</span>' +
+              '<select id="maStatus" class="select">' +
+                '<option value="available"' + (p.status === "available" ? " selected" : "") + '>Attivo</option>' +
+                '<option value="out_of_stock"' + (p.status === "out_of_stock" ? " selected" : "") + '>Esaurito</option>' +
+                '<option value="limited"' + (p.status === "limited" ? " selected" : "") + '>Limitato</option>' +
+                '<option value="hidden"' + (p.status === "hidden" ? " selected" : "") + '>Nascosto</option>' +
+              '</select>' +
+            '</label>' +
+            '<label class="field"><span class="label">Scorciatoia</span>' +
+              '<input id="maShort" class="input" value="' + escapeHtml(p.shortcut_key || "") + '" placeholder="es. F1" />' +
+            '</label>' +
+            '<label class="field"><span class="label">Foto URL</span>' +
+              '<input id="maImg" class="input" value="' + escapeHtml(p.image_url || "") + '" placeholder="https://…" />' +
+            '</label>' +
+          '</div>' +
+
+          // CUSTOMIZATIONS
+          '<div class="section">' +
+            '<div class="h4">Personalizzazioni</div>' +
+            (MA.draftCustoms.length > 0 ? '<div class="muted" style="font-size:11px;margin-bottom:6px">Etichetta · Tipo · Maggiorazione (€)</div>' : '') +
+            '<div class="cust-list">' + customRows + '</div>' +
+            '<button class="add-row-btn" data-action="maCustAdd">+ Aggiungi opzione</button>' +
+          '</div>' +
+
+          // RICETTA
+          '<div class="section">' +
+            '<div class="h4">Ricetta (ingredienti → magazzino)</div>' +
+            (MA.draftRecipe.length > 0 ? '<div class="muted" style="font-size:11px;margin-bottom:6px">Ingrediente · Quantità · Unità</div>' : '') +
+            '<div class="rec-list">' + recipeRows + '</div>' +
+            (MA.ingredients.length > 0
+              ? '<button class="add-row-btn" data-action="maRecipeAdd">+ Aggiungi ingrediente</button>'
+              : '<div class="muted" style="font-size:12px">Nessun ingrediente in anagrafica.</div>'
+            ) +
+            '<div class="cost-summary">' +
+              '<div class="row"><span>Costo materie prime</span><span>' + euroFmt(Math.round(draftCost)) + '</span></div>' +
+              '<div class="row"><span>Prezzo di vendita</span><span>' + euroFmt(draftPrice) + '</span></div>' +
+              '<div class="row total fc ' + fcCls + '"><span>Food cost %</span><span>' + (draftPrice > 0 ? numFmt(draftFcPercent, 1) + '%' : '—') + '</span></div>' +
+            '</div>' +
+          '</div>' +
+
+        '</div>' +
+        '<div class="modal-foot">' +
+          (isNew ? '' : '<button class="btn btn-danger" data-action="maDeleteProduct">Elimina</button>') +
+          '<button class="btn" data-action="maCloseDetail">Annulla</button>' +
+          '<button class="btn btn-primary" data-action="maSaveProduct">' + (isNew ? "Crea prodotto" : "Salva modifiche") + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function maCloseDetail(){
+  MA.detailProduct = null;
+  MA.draftCustoms = [];
+  MA.draftRecipe = [];
+  const m = document.getElementById("maDetailModal");
+  if (m) m.remove();
+}
+
+function maCustAdd(){
+  MA.draftCustoms.push({ label: "", type: "toggle", price_delta_cents: 0 });
+  maRefreshDetailModal();
+}
+function maCustRemove(idx){ MA.draftCustoms.splice(idx, 1); maRefreshDetailModal(); }
+function maCustEdit(idx, field, value){
+  if (!MA.draftCustoms[idx]) return;
+  if (field === "price_delta_cents"){
+    MA.draftCustoms[idx].price_delta_cents = Math.round((parseFloat((value || "0").replace(",", ".")) || 0) * 100);
+  } else {
+    MA.draftCustoms[idx][field] = value;
+  }
+  // niente refresh, è inline (l'input ha già il valore)
+}
+
+function maRecipeAdd(){
+  if (MA.ingredients.length === 0) return;
+  MA.draftRecipe.push({
+    ingredient_id: MA.ingredients[0].id,
+    ingredient_name: MA.ingredients[0].name,
+    unit: MA.ingredients[0].unit,
+    cost_per_unit_cents: MA.ingredients[0].cost_per_unit_cents,
+    qty: 0,
+  });
+  maRefreshDetailModal();
+}
+function maRecipeRemove(idx){ MA.draftRecipe.splice(idx, 1); maRefreshDetailModal(); }
+function maRecipeEdit(idx, field, value){
+  if (!MA.draftRecipe[idx]) return;
+  if (field === "ingredient_id"){
+    const ing = MA.ingredients.find((x) => x.id === value);
+    if (ing){
+      MA.draftRecipe[idx].ingredient_id = ing.id;
+      MA.draftRecipe[idx].ingredient_name = ing.name;
+      MA.draftRecipe[idx].unit = ing.unit;
+      MA.draftRecipe[idx].cost_per_unit_cents = ing.cost_per_unit_cents;
+      maRefreshDetailModal();
+    }
+  } else if (field === "qty"){
+    MA.draftRecipe[idx].qty = parseFloat((value || "0").replace(",", ".")) || 0;
+    maRefreshDetailModal();
+  }
+}
+
+function maRefreshDetailModal(){
+  // Cattura i valori del form prima del re-render così l'utente non li perde
+  const p = MA.detailProduct;
+  if (!p) return;
+  const f = (id) => { const el = document.getElementById(id); return el ? el.value : null; };
+  const nm = f("maName"); if (nm !== null) p.name = nm;
+  const sku = f("maSku"); if (sku !== null) p.sku = sku;
+  const desc = f("maDesc"); if (desc !== null) p.description = desc;
+  const cat = f("maCat"); if (cat !== null) p.category_id = cat;
+  const price = f("maPrice"); if (price !== null) p.price_cents = Math.round((parseFloat((price || "0").replace(",", ".")) || 0) * 100);
+  const vat = f("maVat"); if (vat !== null) p.vat_rate = Number(vat);
+  const status = f("maStatus"); if (status !== null) p.status = status;
+  const short = f("maShort"); if (short !== null) p.shortcut_key = short;
+  const img = f("maImg"); if (img !== null) p.image_url = img;
+
+  const m = document.getElementById("maDetailModal");
+  if (m) m.remove();
+  maShowDetailModal();
+}
+
+async function maSaveProduct(){
+  const p = MA.detailProduct;
+  if (!p) return;
+  maRefreshDetailModal();   // assicura valori aggiornati nello state
+  // re-grab da MA.detailProduct dopo refresh
+  const cur = MA.detailProduct;
+
+  if (!cur.name){ toast("Nome obbligatorio", "error"); return; }
+  if (!cur.category_id){ toast("Categoria obbligatoria", "error"); return; }
+
+  const payload = {
+    name: cur.name,
+    description: cur.description || null,
+    category_id: cur.category_id,
+    price_cents: cur.price_cents || 0,
+    vat_rate: cur.vat_rate || 10,
+    image_url: cur.image_url || null,
+    sku: cur.sku || null,
+    status: cur.status || "available",
+    shortcut_key: cur.shortcut_key || null,
+    customizations: MA.draftCustoms.filter((c) => c.label),
+  };
+
+  let prodId = cur.id;
+  if (cur._new){
+    payload.org_id = BRIO.org.id;
+    const { data, error } = await supa().from("products").insert(payload).select().single();
+    if (error){ err("[ma] insert", error); toast("Errore: " + error.message, "error"); return; }
+    prodId = data.id;
+  } else {
+    const { error } = await supa().from("products").update(payload).eq("id", cur.id);
+    if (error){ err("[ma] update", error); toast("Errore: " + error.message, "error"); return; }
+  }
+
+  // Aggiorna ricetta: cancella le righe esistenti del prodotto, reinserisci
+  await supa().from("recipes").delete().eq("product_id", prodId);
+  const recipes = MA.draftRecipe.filter((r) => r.ingredient_id && r.qty > 0).map((r) => ({
+    org_id: BRIO.org.id,
+    product_id: prodId,
+    ingredient_id: r.ingredient_id,
+    qty: r.qty,
+  }));
+  if (recipes.length > 0){
+    const { error } = await supa().from("recipes").insert(recipes);
+    if (error){ err("[ma] recipes", error); toast("Errore ricetta: " + error.message, "error"); return; }
+  }
+
+  toast(cur._new ? "Prodotto creato" : "Prodotto aggiornato", "success");
+  maCloseDetail();
+  await maLoadAll();
+  maRender();
+}
+
+async function maDeleteProduct(){
+  const p = MA.detailProduct;
+  if (!p || p._new) return;
+  const ok = await brioConfirm({
+    title: "Eliminare il prodotto?",
+    message: "Verrà rimosso anche dal menu e dalle ricette. Gli ordini storici restano intatti.",
+    okLabel: "Elimina",
+    danger: true,
+    icon: "🗑️",
+  });
+  if (!ok) return;
+  await supa().from("recipes").delete().eq("product_id", p.id);
+  const { error } = await supa().from("products").delete().eq("id", p.id);
+  if (error){ toast("Errore: " + error.message, "error"); return; }
+  toast("Prodotto eliminato", "success");
+  maCloseDetail();
+  await maLoadAll();
+  maRender();
+}
+
+// ===== CATEGORIE =====
+function maRenderCategories(){
+  const rows = MA.categories.map((c) => {
+    const count = MA.products.filter((p) => p.category_id === c.id).length;
+    return '<tr data-action="maOpenCategory" data-args=\'["' + c.id + '"]\'>' +
+      '<td class="ico">' + escapeHtml(c.icon || "🍽") + '</td>' +
+      '<td><div class="name">' + escapeHtml(c.name) + '</div><div class="sub">/' + escapeHtml(c.slug) + '</div></td>' +
+      '<td class="sub">' + count + ' prodotti</td>' +
+      '<td class="sub">' + numFmt(c.sort_order, 0) + '</td>' +
+      '<td><span class="status-chip ' + (c.visible ? "available" : "hidden") + '">' + (c.visible ? "Visibile" : "Nascosta") + '</span></td>' +
+    '</tr>';
+  }).join("");
+
+  return (
+    '<div class="ma-toolbar">' +
+      '<div class="spacer"></div>' +
+      '<button class="btn btn-primary" data-action="maNewCategory">+ Nuova categoria</button>' +
+    '</div>' +
+    '<div class="ma-table">' +
+      (MA.categories.length === 0
+        ? '<div class="muted text-center" style="padding:32px">Nessuna categoria.</div>'
+        : '<table>' +
+            '<thead><tr><th></th><th>Categoria</th><th>Prodotti</th><th>Ordine</th><th>Stato</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+          '</table>'
+      ) +
+    '</div>'
+  );
+}
+
+function maNewCategory(){
+  MA.draftCatDetail = { _new: true, name: "", slug: "", icon: "🍽", color: "#10B981", sort_order: 100, visible: true };
+  maShowCategoryModal();
+}
+function maOpenCategory(catId){
+  const c = MA.categories.find((x) => x.id === catId);
+  if (!c) return;
+  MA.draftCatDetail = Object.assign({}, c);
+  maShowCategoryModal();
+}
+function maShowCategoryModal(){
+  const c = MA.draftCatDetail;
+  if (!c) return;
+  const isNew = !!c._new;
+  document.body.insertAdjacentHTML("beforeend",
+    '<div class="modal-backdrop" id="maCatModal" onclick="if(event.target===this) maCloseCategory()">' +
+      '<div class="modal">' +
+        '<div class="modal-head">' +
+          '<h2>' + (isNew ? "Nuova categoria" : escapeHtml(c.name)) + '</h2>' +
+          '<button class="modal-close" data-action="maCloseCategory">×</button>' +
+        '</div>' +
+        '<div class="modal-body">' +
+          '<div class="grid2">' +
+            '<label class="field"><span class="label">Nome *</span><input id="maCatName" class="input" value="' + escapeHtml(c.name) + '" /></label>' +
+            '<label class="field"><span class="label">Slug *</span><input id="maCatSlug" class="input" value="' + escapeHtml(c.slug) + '" placeholder="caffetteria" /></label>' +
+          '</div>' +
+          '<div class="grid3">' +
+            '<label class="field"><span class="label">Icona emoji</span><input id="maCatIcon" class="input" value="' + escapeHtml(c.icon || "") + '" placeholder="☕" /></label>' +
+            '<label class="field"><span class="label">Colore</span><input id="maCatColor" class="input" value="' + escapeHtml(c.color || "#10B981") + '" placeholder="#10B981" /></label>' +
+            '<label class="field"><span class="label">Ordine</span><input id="maCatOrder" class="input" type="number" value="' + (c.sort_order || 0) + '" /></label>' +
+          '</div>' +
+          '<label class="field"><span class="label">Visibile</span>' +
+            '<select id="maCatVis" class="select">' +
+              '<option value="1"' + (c.visible ? " selected" : "") + '>Sì, visibile</option>' +
+              '<option value="0"' + (!c.visible ? " selected" : "") + '>No, nascosta</option>' +
+            '</select>' +
+          '</label>' +
+        '</div>' +
+        '<div class="modal-foot">' +
+          (isNew ? '' : '<button class="btn btn-danger" data-action="maDeleteCategory">Elimina</button>') +
+          '<button class="btn" data-action="maCloseCategory">Annulla</button>' +
+          '<button class="btn btn-primary" data-action="maSaveCategory">' + (isNew ? "Crea" : "Salva") + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+function maCloseCategory(){
+  MA.draftCatDetail = null;
+  const m = document.getElementById("maCatModal");
+  if (m) m.remove();
+}
+
+async function maSaveCategory(){
+  const c = MA.draftCatDetail;
+  if (!c) return;
+  const f = (id) => document.getElementById(id);
+  const name = f("maCatName").value.trim();
+  const slug = (f("maCatSlug").value.trim() || name.toLowerCase().replace(/[^a-z0-9]+/g,"-")).replace(/^-|-$/g,"");
+  if (!name || !slug){ toast("Nome e slug obbligatori", "error"); return; }
+  const payload = {
+    name, slug,
+    icon: f("maCatIcon").value || null,
+    color: f("maCatColor").value || null,
+    sort_order: parseInt(f("maCatOrder").value, 10) || 0,
+    visible: f("maCatVis").value === "1",
+  };
+  if (c._new){
+    payload.org_id = BRIO.org.id;
+    const { error } = await supa().from("categories").insert(payload);
+    if (error){ toast("Errore: " + error.message, "error"); return; }
+  } else {
+    const { error } = await supa().from("categories").update(payload).eq("id", c.id);
+    if (error){ toast("Errore: " + error.message, "error"); return; }
+  }
+  toast(c._new ? "Categoria creata" : "Categoria aggiornata", "success");
+  maCloseCategory();
+  await maLoadAll();
+  maRender();
+}
+
+async function maDeleteCategory(){
+  const c = MA.draftCatDetail;
+  if (!c || c._new) return;
+  const count = MA.products.filter((p) => p.category_id === c.id).length;
+  if (count > 0){
+    await brioAlert({
+      title: "Categoria in uso",
+      message: "Questa categoria contiene " + count + " prodotti. Spostali in un'altra categoria prima di eliminarla.",
+      kind: "warning",
+    });
+    return;
+  }
+  const ok = await brioConfirm({
+    title: "Eliminare la categoria?",
+    okLabel: "Elimina",
+    danger: true,
+  });
+  if (!ok) return;
+  const { error } = await supa().from("categories").delete().eq("id", c.id);
+  if (error){ toast("Errore: " + error.message, "error"); return; }
+  toast("Categoria eliminata", "success");
+  maCloseCategory();
+  await maLoadAll();
+  maRender();
+}
+
+/* ============================================================
  * MODULO MAGAZZINO
  * ============================================================
  * Funzionalità:
@@ -2453,4 +3240,612 @@ function cassaAttachShortcuts(){
     }
   };
   document.addEventListener("keydown", window._cassaShortcutHandler);
+}
+
+/* ============================================================
+ * MODULO KDS · schermo preparazione ordini
+ * ============================================================ */
+const KDS = {
+  orders: [],
+  rtChan: null,
+  refreshTimer: null,
+};
+
+async function renderKdsPage(main){
+  main.innerHTML =
+    '<div class="page-header">' +
+      '<h1>KDS · Ordini in coda</h1>' +
+      '<div class="sub muted" id="kdsLastUpd">—</div>' +
+    '</div>' +
+    '<div class="kds-stats" id="kdsStats"></div>' +
+    '<div id="kdsBody"></div>';
+
+  await kdsLoadOrders();
+  kdsRender();
+
+  if (KDS.rtChan) supa().removeChannel(KDS.rtChan);
+  KDS.rtChan = supa().channel("kds-" + BRIO.org.id)
+    .on("postgres_changes",
+      { event: "*", schema: "public", table: "orders", filter: "org_id=eq." + BRIO.org.id },
+      async () => { await kdsLoadOrders(); kdsRender(); })
+    .subscribe();
+
+  clearInterval(KDS.refreshTimer);
+  KDS.refreshTimer = setInterval(() => {
+    if (location.hash !== "#/kds"){ clearInterval(KDS.refreshTimer); return; }
+    kdsRender();
+  }, 10000);
+}
+
+async function kdsLoadOrders(){
+  const today = localDateStr(new Date());
+  const { data, error } = await supa()
+    .from("orders")
+    .select("id, daily_number, status, channel, payment_method, total_cents, created_at, prep_started_at, ready_at, notes, order_items(id, qty, product_name, customizations)")
+    .eq("org_id", BRIO.org.id)
+    .eq("daily_date", today)
+    .in("status", ["pending","paid","preparing","ready"])
+    .order("created_at", { ascending: true });
+  if (error){ err("[kds] load", error); toast("Errore caricamento ordini", "error"); return; }
+  KDS.orders = data || [];
+  const upd = document.getElementById("kdsLastUpd");
+  if (upd) upd.textContent = "Aggiornato " + timeFmt(new Date()) + " · " + KDS.orders.length + " ordini attivi";
+}
+
+function kdsRender(){
+  const stats = document.getElementById("kdsStats");
+  const body = document.getElementById("kdsBody");
+  if (!stats || !body) return;
+
+  const groups = { pending: [], queued: [], preparing: [], ready: [] };
+  KDS.orders.forEach((o) => {
+    if (o.status === "pending") groups.pending.push(o);
+    else if (o.status === "paid") groups.queued.push(o);
+    else if (o.status === "preparing") groups.preparing.push(o);
+    else if (o.status === "ready") groups.ready.push(o);
+  });
+
+  stats.innerHTML =
+    '<div class="kds-stat-chip pending"><span class="dot"></span><span class="val">' + groups.pending.length + '</span> da incassare</div>' +
+    '<div class="kds-stat-chip queued"><span class="dot"></span><span class="val">' + groups.queued.length + '</span> in coda</div>' +
+    '<div class="kds-stat-chip preparing"><span class="dot"></span><span class="val">' + groups.preparing.length + '</span> in preparazione</div>' +
+    '<div class="kds-stat-chip ready"><span class="dot"></span><span class="val">' + groups.ready.length + '</span> pronti</div>';
+
+  let html = "";
+  html += kdsRenderSection("Da incassare · cliente paga in cassa", groups.pending, "pending");
+  html += kdsRenderSection("In coda", groups.queued, "queued");
+  html += kdsRenderSection("In preparazione", groups.preparing, "preparing");
+  html += kdsRenderSection("Pronto · attesa ritiro", groups.ready, "ready");
+  if (KDS.orders.length === 0){
+    html = '<div class="kds-empty">Nessun ordine attivo al momento. Quando arriverà un nuovo ordine apparirà qui in tempo reale.</div>';
+  }
+  body.innerHTML = html;
+}
+
+function kdsRenderSection(title, list, statusKey){
+  if (list.length === 0) return "";
+  return (
+    '<div class="kds-section">' +
+      '<div class="kds-section-title">' + escapeHtml(title) + ' <span class="count">' + list.length + '</span></div>' +
+      '<div class="kds-grid">' + list.map((o) => kdsRenderCard(o, statusKey)).join("") + '</div>' +
+    '</div>'
+  );
+}
+
+function kdsRenderCard(o, statusKey){
+  const now = Date.now();
+  const created = new Date(o.created_at).getTime();
+  const elapsed = Math.floor((now - created) / 1000);
+  const mm = Math.floor(elapsed / 60);
+  const ss = elapsed % 60;
+  const timerStr = mm + "m " + String(ss).padStart(2, "0") + "s";
+
+  let cardCls = statusKey;
+  if (statusKey === "queued"){
+    if (mm >= 4) cardCls += " danger";
+    else if (mm >= 2) cardCls += " warn";
+  }
+
+  const channelLabel = ({cassa:"🪑 Cassa", kiosk:"📱 Kiosk", menu_qr:"📲 QR tavolo", ahead:"⏰ Prenotato"})[o.channel] || o.channel;
+
+  const items = (o.order_items || []).map((it) => {
+    const customs = (it.customizations || []).map((c) => c.label).join(", ");
+    return '<div class="item-row">' +
+      '<span class="qty">' + it.qty + '×</span> ' + escapeHtml(it.product_name) +
+      (customs ? '<div class="customs">↳ ' + escapeHtml(customs) + '</div>' : '') +
+    '</div>';
+  }).join("");
+
+  let actions = "";
+  if (statusKey === "pending"){
+    actions = '<div style="font-size:12px;color:var(--text-muted);padding-top:4px">Cliente paga in cassa col numero ↑</div>';
+  } else if (statusKey === "queued"){
+    actions = '<button class="btn-start" data-action="kdsStart" data-args=\'["' + o.id + '"]\'>Inizia preparazione →</button>';
+  } else if (statusKey === "preparing"){
+    actions =
+      '<button class="btn-revert" data-action="kdsRevertToQueued" data-args=\'["' + o.id + '"]\' title="Torna in coda">↶</button>' +
+      '<button class="btn-ready" data-action="kdsMarkReady" data-args=\'["' + o.id + '"]\'>Pronto ✓</button>';
+  } else if (statusKey === "ready"){
+    actions = '<button class="btn-delivered" data-action="kdsMarkDelivered" data-args=\'["' + o.id + '"]\'>Consegnato 🎉</button>';
+  }
+
+  return (
+    '<div class="kds-card ' + cardCls + '">' +
+      '<div class="top">' +
+        '<div class="num">#' + o.daily_number + '</div>' +
+        '<div class="channel">' + channelLabel + '</div>' +
+      '</div>' +
+      '<div class="items">' + items + '</div>' +
+      '<div class="timer">⏱ ' + timerStr + (o.notes ? ' · ' + escapeHtml(o.notes) : '') + '</div>' +
+      (actions ? '<div class="actions">' + actions + '</div>' : '') +
+    '</div>'
+  );
+}
+
+async function kdsStart(orderId){
+  const { error } = await supa().from("orders").update({ status: "preparing", prep_started_at: new Date().toISOString() }).eq("id", orderId);
+  if (error){ err("[kds] start", error); toast("Errore", "error"); return; }
+  toast("Inizio preparazione", "success");
+}
+async function kdsMarkReady(orderId){
+  const { error } = await supa().from("orders").update({ status: "ready", ready_at: new Date().toISOString() }).eq("id", orderId);
+  if (error){ err("[kds] ready", error); toast("Errore", "error"); return; }
+  toast("Ordine pronto", "success");
+}
+async function kdsMarkDelivered(orderId){
+  const { error } = await supa().from("orders").update({ status: "delivered", delivered_at: new Date().toISOString() }).eq("id", orderId);
+  if (error){ err("[kds] delivered", error); toast("Errore", "error"); return; }
+  toast("Consegnato", "success");
+}
+async function kdsRevertToQueued(orderId){
+  const { error } = await supa().from("orders").update({ status: "paid", prep_started_at: null }).eq("id", orderId);
+  if (error){ err("[kds] revert", error); toast("Errore", "error"); return; }
+}
+
+/* ============================================================
+ * MODULO MENU ADMIN · CRUD prodotti + categorie + ricette + customizations
+ * ============================================================ */
+const MENU_ADMIN = {
+  tab: "products",
+  search: "",
+  filterCatId: "all",
+  categories: [],
+  products: [],
+  ingredients: [],
+  recipesByProduct: {},
+  editingProduct: null,
+  editingRecipe: [],
+  editingCategory: null,
+};
+
+async function renderMenuAdminPage(main){
+  main.innerHTML =
+    '<div class="page-header"><h1>Menu admin</h1><div class="sub muted">Gestione prodotti, categorie e ricette</div></div>' +
+    '<div class="ma-tabs">' +
+      '<button class="ma-tab active" data-action="maSwitchTab" data-args=\'["products"]\'>Prodotti</button>' +
+      '<button class="ma-tab" data-action="maSwitchTab" data-args=\'["categories"]\'>Categorie</button>' +
+    '</div>' +
+    '<div id="maBody"></div>';
+
+  await maLoadAll();
+  maRender();
+}
+
+async function maLoadAll(){
+  const orgId = BRIO.org.id;
+  const [catRes, prodRes, ingRes, recRes] = await Promise.all([
+    supa().from("categories").select("*").eq("org_id", orgId).order("sort_order"),
+    supa().from("products").select("*").eq("org_id", orgId).order("sort_order"),
+    supa().from("ingredients").select("id, name, unit, cost_per_unit_cents").eq("org_id", orgId).eq("active", true).order("name"),
+    supa().from("recipes").select("product_id, ingredient_id, qty").eq("org_id", orgId),
+  ]);
+  if (catRes.error || prodRes.error || ingRes.error || recRes.error){
+    err("[menu-admin] load", catRes.error || prodRes.error || ingRes.error || recRes.error);
+    toast("Errore caricamento", "error"); return;
+  }
+  MENU_ADMIN.categories = catRes.data || [];
+  MENU_ADMIN.products = prodRes.data || [];
+  MENU_ADMIN.ingredients = ingRes.data || [];
+  MENU_ADMIN.recipesByProduct = {};
+  (recRes.data || []).forEach((r) => {
+    if (!MENU_ADMIN.recipesByProduct[r.product_id]) MENU_ADMIN.recipesByProduct[r.product_id] = [];
+    MENU_ADMIN.recipesByProduct[r.product_id].push({ ingredient_id: r.ingredient_id, qty: Number(r.qty) });
+  });
+}
+
+function maRender(){
+  document.querySelectorAll(".ma-tab").forEach((b) => {
+    const args = b.getAttribute("data-args");
+    if (args){
+      try { b.classList.toggle("active", JSON.parse(args)[0] === MENU_ADMIN.tab); } catch(e){}
+    }
+  });
+  const body = document.getElementById("maBody");
+  if (!body) return;
+  if (MENU_ADMIN.tab === "products") body.innerHTML = maRenderProductsTab();
+  else body.innerHTML = maRenderCategoriesTab();
+}
+
+function maSwitchTab(tab){
+  MENU_ADMIN.tab = tab;
+  maRender();
+}
+
+function maProductCostCents(p){
+  const recipe = MENU_ADMIN.recipesByProduct[p.id] || [];
+  let total = 0;
+  for (const r of recipe){
+    const ing = MENU_ADMIN.ingredients.find((i) => i.id === r.ingredient_id);
+    if (!ing) continue;
+    total += Math.round(Number(r.qty) * Number(ing.cost_per_unit_cents));
+  }
+  return total;
+}
+
+function maRenderProductsTab(){
+  const catOptions = '<option value="all">Tutte le categorie</option>' +
+    MENU_ADMIN.categories.map((c) => '<option value="' + c.id + '"' + (c.id === MENU_ADMIN.filterCatId ? ' selected' : '') + '>' + escapeHtml(c.name) + '</option>').join("");
+
+  const q = MENU_ADMIN.search.toLowerCase().trim();
+  let list = MENU_ADMIN.products;
+  if (MENU_ADMIN.filterCatId !== "all") list = list.filter((p) => p.category_id === MENU_ADMIN.filterCatId);
+  if (q) list = list.filter((p) => p.name.toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q));
+
+  const rows = list.map((p) => {
+    const cat = MENU_ADMIN.categories.find((c) => c.id === p.category_id);
+    const cost = maProductCostCents(p);
+    const foodPct = p.price_cents > 0 ? Math.round((cost / p.price_cents) * 100) : 0;
+    const fcCls = cost === 0 ? "" : foodPct <= 31 ? "good" : foodPct <= 40 ? "" : "bad";
+    return '<tr data-action="maOpenProduct" data-args=\'["' + p.id + '"]\'>' +
+      '<td><div class="prod-name">' + escapeHtml(p.name) + '</div>' +
+        (p.description ? '<div class="prod-desc">' + escapeHtml(p.description) + '</div>' : '') + '</td>' +
+      '<td>' + (cat ? escapeHtml(cat.name) : '—') + '</td>' +
+      '<td class="cost-cell">' + euroFmt(p.price_cents) + '</td>' +
+      '<td>' + numFmt(p.vat_rate, 0) + '%</td>' +
+      '<td class="cost-cell ' + fcCls + '">' + (cost > 0 ? foodPct + "%" : '—') + '</td>' +
+      '<td><span class="status-pill ' + p.status + '">' + escapeHtml(p.status) + '</span></td>' +
+      '<td style="width:80px;text-align:right">' + (p.shortcut_key ? '<span style="font-size:11px;background:var(--smoke);padding:2px 6px;border-radius:4px">' + p.shortcut_key + '</span>' : '') + '</td>' +
+    '</tr>';
+  }).join("");
+
+  return (
+    '<div class="ma-toolbar">' +
+      '<input class="input" placeholder="Cerca prodotto…" oninput="maSetSearch(this.value)" value="' + escapeHtml(MENU_ADMIN.search) + '" />' +
+      '<select class="select" onchange="maSetCatFilter(this.value)">' + catOptions + '</select>' +
+      '<div class="spacer"></div>' +
+      '<button class="btn btn-primary" data-action="maOpenProduct" data-args=\'["new"]\'>+ Nuovo prodotto</button>' +
+    '</div>' +
+    '<div class="ma-table">' +
+      (list.length === 0
+        ? '<div class="muted text-center" style="padding:40px">Nessun prodotto trovato.</div>'
+        : '<table>' +
+            '<thead><tr><th>Nome</th><th>Categoria</th><th>Prezzo</th><th>IVA</th><th>Food cost</th><th>Stato</th><th></th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>'
+      ) +
+    '</div>'
+  );
+}
+
+function maSetSearch(v){ MENU_ADMIN.search = v || ""; maRender(); }
+function maSetCatFilter(v){ MENU_ADMIN.filterCatId = v || "all"; maRender(); }
+
+async function maOpenProduct(productId){
+  let p;
+  if (productId === "new"){
+    p = { id: null, org_id: BRIO.org.id, name: "", description: "", category_id: MENU_ADMIN.categories[0] ? MENU_ADMIN.categories[0].id : null,
+          price_cents: 0, vat_rate: 10, sku: "", image_url: "", status: "available", shortcut_key: "", tags: [], customizations: [], sort_order: 0 };
+  } else {
+    const found = MENU_ADMIN.products.find((x) => x.id === productId);
+    if (!found) return;
+    p = JSON.parse(JSON.stringify(found));
+    p.customizations = Array.isArray(p.customizations) ? p.customizations : [];
+    p.tags = Array.isArray(p.tags) ? p.tags : [];
+  }
+  const baseRecipe = (MENU_ADMIN.recipesByProduct[productId] || []).map((r) => ({ ingredient_id: r.ingredient_id, qty: r.qty }));
+  MENU_ADMIN.editingProduct = p;
+  MENU_ADMIN.editingRecipe = baseRecipe;
+  maShowProductModal();
+}
+
+function maShowProductModal(){
+  const p = MENU_ADMIN.editingProduct;
+  const recipe = MENU_ADMIN.editingRecipe;
+  if (!p) return;
+
+  const catOptions = MENU_ADMIN.categories.map((c) =>
+    '<option value="' + c.id + '"' + (c.id === p.category_id ? ' selected' : '') + '>' + escapeHtml(c.name) + '</option>'
+  ).join("");
+
+  const statusOptions = ["available","limited","out_of_stock","hidden"].map((s) =>
+    '<option value="' + s + '"' + (s === p.status ? ' selected' : '') + '>' + s + '</option>'
+  ).join("");
+
+  const customRows = (p.customizations || []).map((c, idx) => (
+    '<div class="ma-cust-row">' +
+      '<input type="text" value="' + escapeHtml(c.label || "") + '" placeholder="Etichetta (es. Decaffeinato)" oninput="maEditCust(' + idx + ',\'label\',this.value)" />' +
+      '<select onchange="maEditCust(' + idx + ',\'type\',this.value)">' +
+        ['toggle','extra','variant'].map((t) => '<option value="' + t + '"' + (c.type === t ? ' selected' : '') + '>' + t + '</option>').join("") +
+      '</select>' +
+      '<input type="number" step="0.01" min="0" value="' + ((Number(c.price_delta_cents) || 0) / 100).toFixed(2) + '" placeholder="+€" oninput="maEditCust(' + idx + ',\'price_delta_cents\',Math.round(this.value*100))" />' +
+      '<button class="x" data-action="maRemoveCust" data-args="[' + idx + ']">×</button>' +
+    '</div>'
+  )).join("");
+
+  const recipeRows = recipe.map((r, idx) => {
+    const ing = MENU_ADMIN.ingredients.find((i) => i.id === r.ingredient_id);
+    const ingOptions = MENU_ADMIN.ingredients.map((i) =>
+      '<option value="' + i.id + '"' + (i.id === r.ingredient_id ? ' selected' : '') + '>' + escapeHtml(i.name) + ' (' + i.unit + ')</option>'
+    ).join("");
+    return '<div class="ma-recipe-row">' +
+      '<select onchange="maEditRecipe(' + idx + ',\'ingredient_id\',this.value)">' + ingOptions + '</select>' +
+      '<input type="number" step="0.01" min="0" value="' + r.qty + '" oninput="maEditRecipe(' + idx + ',\'qty\',parseFloat(this.value)||0)" />' +
+      '<div style="font-size:11px;color:var(--text-muted);text-align:right;line-height:1.2">' + (ing ? escapeHtml(ing.unit) + ' · ' + euroFmt(Math.round(r.qty * ing.cost_per_unit_cents)) : '—') + '</div>' +
+      '<button class="x" data-action="maRemoveRecipe" data-args="[' + idx + ']">×</button>' +
+    '</div>';
+  }).join("");
+
+  const totalCost = recipe.reduce((acc, r) => {
+    const ing = MENU_ADMIN.ingredients.find((i) => i.id === r.ingredient_id);
+    return acc + (ing ? Math.round(r.qty * ing.cost_per_unit_cents) : 0);
+  }, 0);
+  const foodPct = p.price_cents > 0 ? Math.round((totalCost / p.price_cents) * 100) : 0;
+  const fcCls = totalCost === 0 ? "" : foodPct <= 31 ? "good" : foodPct <= 40 ? "" : "bad";
+
+  document.querySelectorAll("#maProductModal").forEach((m) => m.remove());
+
+  document.body.insertAdjacentHTML("beforeend",
+    '<div class="modal-backdrop ma-modal" id="maProductModal" onclick="if(event.target===this) maCloseProduct()">' +
+      '<div class="modal">' +
+        '<div class="modal-head">' +
+          '<h2>' + (p.id ? escapeHtml(p.name || "Senza nome") : "Nuovo prodotto") + '</h2>' +
+          '<button class="modal-close" data-action="maCloseProduct">×</button>' +
+        '</div>' +
+        '<div class="modal-body">' +
+          '<div class="section-title">Anagrafica</div>' +
+          '<div class="form-grid">' +
+            '<label class="field full"><span class="label">Nome</span><input class="input" id="mafName" type="text" value="' + escapeHtml(p.name) + '" placeholder="Es. Cappuccino" /></label>' +
+            '<label class="field full"><span class="label">Descrizione</span><input class="input" id="mafDesc" type="text" value="' + escapeHtml(p.description || "") + '" placeholder="Espresso + latte montato" /></label>' +
+            '<label class="field"><span class="label">Categoria</span><select class="select" id="mafCat">' + catOptions + '</select></label>' +
+            '<label class="field"><span class="label">SKU</span><input class="input" id="mafSku" type="text" value="' + escapeHtml(p.sku || "") + '" placeholder="es. CAF-002" /></label>' +
+            '<label class="field"><span class="label">Prezzo (€)</span><input class="input" id="mafPrice" type="number" step="0.01" min="0" value="' + (p.price_cents / 100).toFixed(2) + '" /></label>' +
+            '<label class="field"><span class="label">IVA (%)</span><input class="input" id="mafVat" type="number" step="0.5" min="0" max="25" value="' + p.vat_rate + '" /></label>' +
+            '<label class="field"><span class="label">Stato</span><select class="select" id="mafStatus">' + statusOptions + '</select></label>' +
+            '<label class="field"><span class="label">Scorciatoia tastiera</span><input class="input" id="mafShortcut" type="text" value="' + escapeHtml(p.shortcut_key || "") + '" placeholder="F1, F2, …" /></label>' +
+            '<label class="field full"><span class="label">URL foto (Supabase Storage o Unsplash)</span><input class="input" id="mafImage" type="text" value="' + escapeHtml(p.image_url || "") + '" placeholder="https://…" /></label>' +
+          '</div>' +
+          '<div class="section-title">Personalizzazioni cliente</div>' +
+          '<div class="ma-cust-list" id="maCustList">' + customRows + '</div>' +
+          '<button class="ma-add-btn mt-8" data-action="maAddCust">+ Aggiungi personalizzazione</button>' +
+          '<div class="section-title">Ricetta · ingredienti → scarico magazzino</div>' +
+          '<div class="ma-recipe-list" id="maRecipeList">' + recipeRows + '</div>' +
+          '<button class="ma-add-btn mt-8" data-action="maAddRecipe">+ Aggiungi ingrediente</button>' +
+          '<div class="food-cost-bar">' +
+            '<div><div class="lbl">Costo materie prime</div><div class="val">' + euroFmt(totalCost) + '</div></div>' +
+            '<div><div class="lbl">Prezzo vendita</div><div class="val">' + euroFmt(p.price_cents) + '</div></div>' +
+            '<div><div class="lbl">Food cost %</div><div class="val ' + fcCls + '">' + (totalCost > 0 ? foodPct + "%" : '—') + '</div></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="modal-foot">' +
+          (p.id ? '<button class="btn btn-danger" data-action="maDeleteProduct">Elimina</button>' : '') +
+          '<div style="flex:1"></div>' +
+          '<button class="btn" data-action="maCloseProduct">Annulla</button>' +
+          '<button class="btn btn-primary" data-action="maSaveProduct">' + (p.id ? "Salva modifiche" : "Crea prodotto") + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function maCloseProduct(){
+  MENU_ADMIN.editingProduct = null;
+  MENU_ADMIN.editingRecipe = [];
+  document.querySelectorAll("#maProductModal").forEach((m) => m.remove());
+}
+
+function maEditCust(idx, field, value){
+  if (!MENU_ADMIN.editingProduct.customizations) MENU_ADMIN.editingProduct.customizations = [];
+  if (!MENU_ADMIN.editingProduct.customizations[idx]) return;
+  MENU_ADMIN.editingProduct.customizations[idx][field] = value;
+}
+function maAddCust(){
+  if (!MENU_ADMIN.editingProduct.customizations) MENU_ADMIN.editingProduct.customizations = [];
+  MENU_ADMIN.editingProduct.customizations.push({ label: "", type: "toggle", price_delta_cents: 0 });
+  maShowProductModal();
+}
+function maRemoveCust(idx){
+  MENU_ADMIN.editingProduct.customizations.splice(idx, 1);
+  maShowProductModal();
+}
+function maEditRecipe(idx, field, value){
+  if (!MENU_ADMIN.editingRecipe[idx]) return;
+  MENU_ADMIN.editingRecipe[idx][field] = value;
+  if (field === "qty" || field === "ingredient_id") maShowProductModal();
+}
+function maAddRecipe(){
+  const firstIng = MENU_ADMIN.ingredients[0];
+  if (!firstIng){ toast("Crea prima un ingrediente", "error"); return; }
+  MENU_ADMIN.editingRecipe.push({ ingredient_id: firstIng.id, qty: 1 });
+  maShowProductModal();
+}
+function maRemoveRecipe(idx){
+  MENU_ADMIN.editingRecipe.splice(idx, 1);
+  maShowProductModal();
+}
+
+async function maSaveProduct(){
+  const p = MENU_ADMIN.editingProduct;
+  if (!p) return;
+  const get = (id) => { const el = document.getElementById(id); return el ? el.value : ""; };
+  const name = get("mafName");
+  if (!name.trim()){ toast("Nome obbligatorio", "error"); return; }
+  const payload = {
+    org_id: BRIO.org.id,
+    name: name.trim(),
+    description: get("mafDesc"),
+    category_id: get("mafCat") || null,
+    sku: (get("mafSku") || "").trim() || null,
+    price_cents: Math.round(parseFloat((get("mafPrice") || "0").replace(",", ".")) * 100),
+    vat_rate: parseFloat((get("mafVat") || "10").replace(",", ".")),
+    status: get("mafStatus") || "available",
+    shortcut_key: (get("mafShortcut") || "").trim().toUpperCase() || null,
+    image_url: (get("mafImage") || "").trim() || null,
+    customizations: (p.customizations || []).filter((c) => c.label && c.label.trim()).map((c) => ({
+      label: c.label.trim(),
+      type: c.type || "toggle",
+      price_delta_cents: Math.round(Number(c.price_delta_cents) || 0),
+    })),
+  };
+
+  let prodId = p.id;
+  if (p.id){
+    const { error } = await supa().from("products").update(payload).eq("id", p.id);
+    if (error){ err("[ma] update prod", error); toast("Errore: " + error.message, "error"); return; }
+  } else {
+    const { data, error } = await supa().from("products").insert(payload).select().single();
+    if (error){ err("[ma] insert prod", error); toast("Errore: " + error.message, "error"); return; }
+    prodId = data.id;
+  }
+
+  await supa().from("recipes").delete().eq("product_id", prodId);
+  const validRecipe = MENU_ADMIN.editingRecipe.filter((r) => r.ingredient_id && Number(r.qty) > 0);
+  if (validRecipe.length > 0){
+    const { error: recErr } = await supa().from("recipes").insert(
+      validRecipe.map((r) => ({ org_id: BRIO.org.id, product_id: prodId, ingredient_id: r.ingredient_id, qty: Number(r.qty) }))
+    );
+    if (recErr){ err("[ma] recipe", recErr); toast("Prodotto salvato ma errore ricetta: " + recErr.message, "error"); }
+  }
+
+  toast(p.id ? "Prodotto aggiornato" : "Prodotto creato", "success");
+  maCloseProduct();
+  await maLoadAll();
+  maRender();
+}
+
+async function maDeleteProduct(){
+  const p = MENU_ADMIN.editingProduct;
+  if (!p || !p.id) return;
+  const ok = await brioConfirm({
+    title: "Eliminare il prodotto?",
+    message: '"' + p.name + '" verrà rimosso dal menu. Gli ordini storici non vengono toccati.',
+    okLabel: "Elimina", danger: true, icon: "🗑️",
+  });
+  if (!ok) return;
+  await supa().from("recipes").delete().eq("product_id", p.id);
+  const { error } = await supa().from("products").delete().eq("id", p.id);
+  if (error){ err("[ma] delete prod", error); toast("Errore: " + error.message, "error"); return; }
+  toast("Prodotto eliminato", "success");
+  maCloseProduct();
+  await maLoadAll();
+  maRender();
+}
+
+function maRenderCategoriesTab(){
+  const rows = MENU_ADMIN.categories.map((c) => {
+    const productCount = MENU_ADMIN.products.filter((p) => p.category_id === c.id).length;
+    return '<tr data-action="maOpenCategory" data-args=\'["' + c.id + '"]\'>' +
+      '<td style="font-size:22px;width:50px">' + (c.icon || '🍽') + '</td>' +
+      '<td><div class="prod-name">' + escapeHtml(c.name) + '</div><div class="prod-desc">' + escapeHtml(c.slug) + '</div></td>' +
+      '<td>' + productCount + ' prodotti</td>' +
+      '<td>' + (c.visible ? '<span class="status-pill available">visibile</span>' : '<span class="status-pill hidden">nascosta</span>') + '</td>' +
+      '<td style="width:80px;text-align:right">' + c.sort_order + '</td>' +
+    '</tr>';
+  }).join("");
+
+  return (
+    '<div class="ma-toolbar">' +
+      '<div class="spacer"></div>' +
+      '<button class="btn btn-primary" data-action="maOpenCategory" data-args=\'["new"]\'>+ Nuova categoria</button>' +
+    '</div>' +
+    '<div class="ma-table">' +
+      (MENU_ADMIN.categories.length === 0
+        ? '<div class="muted text-center" style="padding:40px">Nessuna categoria.</div>'
+        : '<table>' +
+            '<thead><tr><th></th><th>Nome</th><th>Prodotti</th><th>Stato</th><th>Ordine</th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>'
+      ) +
+    '</div>'
+  );
+}
+
+async function maOpenCategory(catId){
+  let c;
+  if (catId === "new"){
+    c = { id: null, org_id: BRIO.org.id, name: "", slug: "", icon: "🍽", color: "#10B981", sort_order: (MENU_ADMIN.categories.length + 1) * 10, visible: true };
+  } else {
+    const found = MENU_ADMIN.categories.find((x) => x.id === catId);
+    if (!found) return;
+    c = JSON.parse(JSON.stringify(found));
+  }
+  MENU_ADMIN.editingCategory = c;
+
+  document.querySelectorAll("#maCatModal").forEach((m) => m.remove());
+  document.body.insertAdjacentHTML("beforeend",
+    '<div class="modal-backdrop" id="maCatModal" onclick="if(event.target===this) maCloseCategory()">' +
+      '<div class="modal" style="max-width:480px">' +
+        '<div class="modal-head"><h2>' + (c.id ? "Modifica categoria" : "Nuova categoria") + '</h2><button class="modal-close" data-action="maCloseCategory">×</button></div>' +
+        '<div class="modal-body">' +
+          '<label class="field"><span class="label">Nome</span><input class="input" id="macName" value="' + escapeHtml(c.name) + '" /></label>' +
+          '<label class="field"><span class="label">Slug (univoco, kebab-case)</span><input class="input" id="macSlug" value="' + escapeHtml(c.slug) + '" placeholder="es. caffetteria" /></label>' +
+          '<label class="field"><span class="label">Icona (emoji)</span><input class="input" id="macIcon" value="' + escapeHtml(c.icon || "") + '" /></label>' +
+          '<label class="field"><span class="label">Ordine</span><input class="input" id="macOrder" type="number" value="' + c.sort_order + '" /></label>' +
+          '<label class="field"><input type="checkbox" id="macVisible" ' + (c.visible ? "checked" : "") + ' /> Visibile in menu</label>' +
+        '</div>' +
+        '<div class="modal-foot">' +
+          (c.id ? '<button class="btn btn-danger" data-action="maDeleteCategory">Elimina</button>' : '') +
+          '<div style="flex:1"></div>' +
+          '<button class="btn" data-action="maCloseCategory">Annulla</button>' +
+          '<button class="btn btn-primary" data-action="maSaveCategory">Salva</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function maCloseCategory(){
+  MENU_ADMIN.editingCategory = null;
+  document.querySelectorAll("#maCatModal").forEach((m) => m.remove());
+}
+
+async function maSaveCategory(){
+  const c = MENU_ADMIN.editingCategory;
+  if (!c) return;
+  const get = (id) => { const el = document.getElementById(id); return el ? el.value : ""; };
+  const name = get("macName");
+  const slug = get("macSlug");
+  const icon = get("macIcon") || "🍽";
+  const order = parseInt((get("macOrder") || "0"), 10) || 0;
+  const visible = document.getElementById("macVisible") && document.getElementById("macVisible").checked;
+  if (!name.trim() || !slug.trim()){ toast("Nome e slug obbligatori", "error"); return; }
+
+  const payload = { org_id: BRIO.org.id, name: name.trim(), slug: slug.trim().toLowerCase(), icon, sort_order: order, visible };
+
+  if (c.id){
+    const { error } = await supa().from("categories").update(payload).eq("id", c.id);
+    if (error){ err("[ma] cat upd", error); toast("Errore: " + error.message, "error"); return; }
+  } else {
+    const { error } = await supa().from("categories").insert(payload);
+    if (error){ err("[ma] cat ins", error); toast("Errore: " + error.message, "error"); return; }
+  }
+  toast(c.id ? "Categoria aggiornata" : "Categoria creata", "success");
+  maCloseCategory();
+  await maLoadAll();
+  maRender();
+}
+
+async function maDeleteCategory(){
+  const c = MENU_ADMIN.editingCategory;
+  if (!c || !c.id) return;
+  const used = MENU_ADMIN.products.filter((p) => p.category_id === c.id).length;
+  if (used > 0){
+    await brioAlert({ title: "Categoria in uso", message: "Ci sono " + used + " prodotti in questa categoria. Spostali in un'altra prima di eliminarla.", kind: "warning" });
+    return;
+  }
+  const ok = await brioConfirm({ title: "Eliminare la categoria?", message: '"' + c.name + '" verrà rimossa.', okLabel: "Elimina", danger: true, icon: "🗑️" });
+  if (!ok) return;
+  const { error } = await supa().from("categories").delete().eq("id", c.id);
+  if (error){ err("[ma] cat del", error); toast("Errore: " + error.message, "error"); return; }
+  toast("Categoria eliminata", "success");
+  maCloseCategory();
+  await maLoadAll();
+  maRender();
 }

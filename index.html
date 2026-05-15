@@ -838,6 +838,183 @@ main#appContent{
 }
 
 /* ============================================================
+   KDS — schermo retrobanco (kitchen display system)
+   ============================================================ */
+.kds-bar{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom: 20px; }
+.kds-stat{ flex: 0 0 auto; padding: 10px 16px; border-radius: 12px; background: var(--bg-card); border: 1px solid var(--line); font-size: 13px; }
+.kds-stat .num{ font-weight: 700; font-size: 18px; margin-right: 4px; }
+.kds-stat.warn .num{ color: var(--warning); }
+.kds-stat.danger .num{ color: var(--danger); }
+.kds-stat.success .num{ color: var(--emerald); }
+.kds-stat.info .num{ color: var(--midnight); }
+
+.kds-section{ margin-bottom: 28px; }
+.kds-section h3{
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-muted); margin: 0 0 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.kds-section h3 .badge{
+  display: inline-flex; padding: 2px 8px; border-radius: 999px;
+  background: var(--smoke); color: var(--text);
+  font-size: 11px; font-weight: 600;
+}
+.kds-grid{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+.kds-empty{ color: var(--text-muted); font-size: 13px; padding: 16px 4px; }
+
+.kds-card{
+  background: var(--bg-card);
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+  position: relative;
+  display: flex; flex-direction: column;
+  min-height: 200px;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.kds-card.queued{ border-color: var(--smoke); }
+.kds-card.queued.warn{ border-color: var(--warning); background: rgba(245,158,11,.04); }
+.kds-card.queued.danger{ border-color: var(--danger); background: rgba(220,38,38,.04); animation: pulse-danger 1.6s ease-in-out infinite; }
+@keyframes pulse-danger{
+  0%, 100%{ box-shadow: 0 0 0 0 rgba(220,38,38,0); }
+  50%{ box-shadow: 0 0 0 6px rgba(220,38,38,.18); }
+}
+.kds-card.preparing{ border-color: var(--midnight); background: rgba(30,58,138,.05); }
+.kds-card.ready{ border-color: var(--emerald); background: rgba(16,185,129,.06); }
+.kds-card.pending-pay{ border-color: var(--warning); background: rgba(245,158,11,.06); border-style: dashed; }
+
+.kds-card .top{
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 8px;
+}
+.kds-card .num{
+  font-size: 36px; font-weight: 800; font-style: italic;
+  line-height: 1; color: var(--text);
+}
+.kds-card .ch{
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  padding: 4px 8px; border-radius: 999px;
+  background: var(--bg-soft); color: var(--text-muted);
+  font-weight: 600;
+}
+.kds-card .items{
+  flex: 1;
+  list-style: none; margin: 0; padding: 0;
+  font-size: 14px; line-height: 1.45;
+}
+.kds-card .items li{ padding: 4px 0; border-bottom: 1px dotted var(--line); }
+.kds-card .items li:last-child{ border-bottom: 0; }
+.kds-card .items .qty-badge{ display:inline-block; min-width: 22px; padding: 2px 6px; background: var(--smoke); border-radius: 6px; font-weight: 700; margin-right: 6px; font-size: 12px; }
+.kds-card .items .custom{ display: block; padding-left: 28px; font-size: 11px; color: var(--text-muted); font-style: italic; }
+.kds-card .note{ background: var(--bg-soft); padding: 6px 10px; border-radius: 8px; font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
+.kds-card .foot{ display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.kds-card .timer{ font-size: 12px; color: var(--text-muted); font-weight: 600; }
+.kds-card.queued.warn .timer{ color: var(--warning); }
+.kds-card.queued.danger .timer{ color: var(--danger); }
+.kds-card .act{
+  padding: 8px 14px; border: 0; border-radius: 10px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  background: var(--onyx); color: var(--champagne);
+  transition: transform .08s ease;
+}
+.kds-card .act:hover{ transform: translateY(-1px); }
+.kds-card.preparing .act{ background: var(--emerald); color: white; }
+.kds-card.ready .act{ background: var(--midnight); color: white; }
+.kds-card.pending-pay .info-msg{
+  background: rgba(245,158,11,.15); color: #92400e;
+  padding: 6px 10px; border-radius: 8px; font-size: 11px; font-weight: 600;
+  text-align: center; margin-top: 6px;
+}
+
+/* ============================================================
+   MENU ADMIN — gestione prodotti, categorie, ricette
+   ============================================================ */
+.ma-tabs{ display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--line); }
+.ma-tab{
+  padding: 12px 20px; border: 0; background: transparent;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.ma-tab:hover{ color: var(--text); }
+.ma-tab.active{ color: var(--text); border-bottom-color: var(--emerald); }
+
+.ma-toolbar{ display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.ma-toolbar .input{ max-width: 260px; }
+.ma-toolbar .select{ max-width: 220px; }
+.ma-toolbar .spacer{ flex: 1; }
+
+.ma-table{ background: var(--bg-card); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+.ma-table table{ width: 100%; border-collapse: collapse; }
+.ma-table th{ background: var(--bg-soft); padding: 12px 14px; text-align: left; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid var(--line); }
+.ma-table td{ padding: 12px 14px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: middle; }
+.ma-table tr:last-child td{ border-bottom: 0; }
+.ma-table tbody tr{ cursor: pointer; transition: background .1s ease; }
+.ma-table tbody tr:hover{ background: var(--bg-soft); }
+.ma-table .ico{ font-size: 22px; }
+.ma-table .name{ font-weight: 600; }
+.ma-table .sub{ font-size: 12px; color: var(--text-muted); }
+.ma-table .price{ color: var(--emerald); font-weight: 700; }
+.ma-table .vat{ font-size: 12px; color: var(--text-muted); }
+.ma-table .fc{ font-weight: 600; }
+.ma-table .fc.ok{ color: var(--emerald); }
+.ma-table .fc.warn{ color: var(--warning); }
+.ma-table .fc.danger{ color: var(--danger); }
+.ma-table .status-chip{ font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 600; display: inline-block; }
+.ma-table .status-chip.available{ background: rgba(16,185,129,.12); color: #047857; }
+.ma-table .status-chip.out_of_stock{ background: rgba(220,38,38,.12); color: var(--danger); }
+.ma-table .status-chip.hidden{ background: var(--smoke); color: var(--text-muted); }
+.ma-table .status-chip.limited{ background: rgba(245,158,11,.14); color: #b45309; }
+
+.ma-detail .modal{ max-width: 720px; }
+.ma-detail .grid2{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ma-detail .grid3{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.ma-detail .section{ margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.ma-detail .section .h4{ font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 10px; font-weight: 700; }
+
+.cust-list, .rec-list{ display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.cust-row, .rec-row{
+  display: grid; align-items: center; gap: 8px;
+  padding: 8px 12px; background: var(--bg-soft); border-radius: 10px;
+}
+.cust-row{ grid-template-columns: 1fr 110px 110px 36px; }
+.rec-row{ grid-template-columns: 1fr 110px 60px 36px; }
+.cust-row input, .cust-row select, .rec-row input, .rec-row select{ font-size: 13px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg-card); outline: none; }
+.cust-row input:focus, .rec-row input:focus, .cust-row select:focus, .rec-row select:focus{ border-color: var(--emerald); }
+.cust-row .x, .rec-row .x{ background: transparent; border: 0; cursor: pointer; color: var(--text-muted); font-size: 18px; padding: 4px; border-radius: 6px; }
+.cust-row .x:hover, .rec-row .x:hover{ background: rgba(220,38,38,.1); color: var(--danger); }
+.rec-row .unit{ font-size: 12px; color: var(--text-muted); padding: 6px 0; }
+
+.add-row-btn{
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 14px; border-radius: 10px;
+  background: transparent; border: 1px dashed var(--line-strong);
+  color: var(--text-muted); cursor: pointer; font-size: 13px;
+}
+.add-row-btn:hover{ border-color: var(--emerald); color: var(--emerald); }
+
+.cost-summary{ background: var(--bg-soft); padding: 12px 14px; border-radius: 12px; margin-top: 12px; }
+.cost-summary .row{ display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; }
+.cost-summary .row.total{ font-weight: 700; border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; }
+.cost-summary .row.fc.ok span:last-child{ color: var(--emerald); }
+.cost-summary .row.fc.warn span:last-child{ color: var(--warning); }
+.cost-summary .row.fc.danger span:last-child{ color: var(--danger); }
+
+@media (max-width: 720px){
+  .ma-detail .grid2, .ma-detail .grid3{ grid-template-columns: 1fr; }
+  .ma-table table, .ma-table thead, .ma-table tbody, .ma-table th, .ma-table td, .ma-table tr{ display:block; }
+  .ma-table thead{ display:none; }
+  .ma-table tr{ padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .ma-table td{ padding: 2px 0; border-bottom: 0; }
+}
+
+/* ============================================================
    DIALOG (popup brandizzato — sostituisce alert/confirm/prompt del browser)
    ============================================================ */
 .brio-dlg-back{
