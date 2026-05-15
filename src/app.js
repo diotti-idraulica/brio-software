@@ -228,7 +228,7 @@ const ROUTES = {
   "#/":           { name: "home",       render: renderHomePage },
   "#/cassa":      { name: "cassa",      render: renderCassaPage },
   "#/kiosk":      { name: "kiosk",      fullscreen: true, render: renderKioskPage },
-  "#/kds":        { name: "kds",        fullscreen: true, render: renderKdsPage },
+  "#/kds":        { name: "kds",        render: renderKdsPage },
   "#/dashboard":  { name: "dashboard",  adminOnly: true, render: renderDashboardPage },
   "#/magazzino":  { name: "magazzino",  managerUp: true, render: renderMagazzinoPage },
   "#/fornitori":  { name: "fornitori",  managerUp: true, render: renderFornitoriPage },
@@ -376,7 +376,7 @@ async function logout(){
 // ============================================================
 // HOME
 // ============================================================
-function renderHomePage(main){
+async function renderHomePage(main){
   const now = new Date();
   const greet = greetingFromHour(now.getHours());
   const name = (BRIO.member && BRIO.member.full_name) ? BRIO.member.full_name.split(" ")[0] : "";
@@ -406,7 +406,90 @@ function renderHomePage(main){
         '<div class="sub">' + escapeHtml(BRIO.org ? BRIO.org.name : "Brio") + ' · ' + dateFmt(now) + '</div>' +
       '</div>' +
     '</div>' +
+    // Widget Oggi (KPI giorno corrente)
+    '<div id="homeOggi" class="mb-24"></div>' +
+    '<h2 style="font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin:0 0 12px;font-weight:600">Moduli</h2>' +
     '<div class="module-grid">' + cards + '</div>';
+
+  // Carica recap "Oggi" in background
+  loadHomeOggi();
+}
+
+async function loadHomeOggi(){
+  const host = document.getElementById("homeOggi");
+  if (!host) return;
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const todayISO = today.toISOString();
+
+  // Query: ordini paid di oggi + righe (per top prodotti)
+  const { data: orders, error } = await supa()
+    .from("orders")
+    .select("id, daily_number, total_cents, status, channel, created_at, order_items(qty, product_name)")
+    .eq("org_id", BRIO.org.id)
+    .eq("daily_date", today.toISOString().slice(0,10))
+    .in("status", ["paid","preparing","ready","delivered"])
+    .order("created_at", { ascending: false });
+
+  if (error){ err("[home] oggi", error); return; }
+
+  const list = orders || [];
+  const fatturato = list.reduce((a, o) => a + Number(o.total_cents || 0), 0);
+  const ticket = list.length > 0 ? Math.round(fatturato / list.length) : 0;
+
+  // Aggrega top prodotti
+  const prodCount = {};
+  list.forEach((o) => (o.order_items || []).forEach((it) => {
+    prodCount[it.product_name] = (prodCount[it.product_name] || 0) + Number(it.qty);
+  }));
+  const topProds = Object.entries(prodCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+  // Ultimi 5 ordini
+  const lastOrders = list.slice(0, 5);
+
+  host.innerHTML =
+    '<div class="card" style="padding:0;overflow:hidden">' +
+      '<div style="padding:18px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center">' +
+        '<div>' +
+          '<div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">Oggi</div>' +
+          '<div style="font-size:18px;font-weight:600;margin-top:2px">' + dateFmt(today) + '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:24px;text-align:right">' +
+          '<div><div style="font-size:11px;color:var(--text-muted)">Ordini</div><div style="font-size:22px;font-weight:700">' + list.length + '</div></div>' +
+          '<div><div style="font-size:11px;color:var(--text-muted)">Fatturato</div><div style="font-size:22px;font-weight:700;color:var(--emerald)">' + euroFmt(fatturato) + '</div></div>' +
+          '<div><div style="font-size:11px;color:var(--text-muted)">Ticket medio</div><div style="font-size:22px;font-weight:700">' + euroFmt(ticket) + '</div></div>' +
+        '</div>' +
+      '</div>' +
+      (list.length === 0
+        ? '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">Nessun ordine ancora oggi. Batti il primo dalla cassa.</div>'
+        : '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">' +
+            // Ultimi ordini
+            '<div style="padding:16px 20px;border-right:1px solid var(--line)">' +
+              '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">Ultimi ordini</div>' +
+              lastOrders.map((o) => {
+                const items = (o.order_items || []).slice(0, 2).map((it) => it.qty + "× " + it.product_name).join(", ");
+                const more = (o.order_items || []).length > 2 ? " +" + ((o.order_items || []).length - 2) : "";
+                return '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--line);">' +
+                  '<div><div style="font-weight:600">#' + o.daily_number + ' · ' + timeFmt(o.created_at) + '</div><div style="color:var(--text-muted);font-size:12px">' + escapeHtml(items + more) + '</div></div>' +
+                  '<div style="font-weight:600">' + euroFmt(o.total_cents) + '</div>' +
+                '</div>';
+              }).join("") +
+            '</div>' +
+            // Top prodotti
+            '<div style="padding:16px 20px">' +
+              '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px">Più venduti oggi</div>' +
+              (topProds.length === 0 ? '<div style="color:var(--text-muted);font-size:13px">—</div>' :
+                topProds.map(([nm, qty]) => (
+                  '<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-bottom:1px solid var(--line);">' +
+                    '<div>' + escapeHtml(nm) + '</div>' +
+                    '<div style="font-weight:600">' + qty + '×</div>' +
+                  '</div>'
+                )).join("")
+              ) +
+            '</div>' +
+          '</div>'
+      ) +
+    '</div>';
 }
 
 function greetingFromHour(h){
@@ -429,7 +512,7 @@ function placeholderPage(main, title, desc){
 }
 
 // renderCassaPage: vedi sezione CASSA in fondo al file
-function renderKioskPage(main){      placeholderPage(main, "Kiosk self-order", "Modalità auto-ordine per totem cliente."); }
+// renderKioskPage: vedi sezione KIOSK in fondo al file
 function renderKdsPage(main){        placeholderPage(main, "KDS retrobanco", "Schermo preparazione ordini in tempo reale."); }
 function renderDashboardPage(main){  placeholderPage(main, "Dashboard", "KPI del giorno, food cost, allarmi magazzino, performance."); }
 // renderMagazzinoPage: vedi sezione MAGAZZINO in fondo al file
@@ -791,11 +874,12 @@ async function cassaConfirmOrder(){
   const orgId = BRIO.org.id;
   const change = CASSA.paymentMethod === "cash" ? Math.max(0, CASSA.cashGiven - t.total) : 0;
 
-  // 1) INSERT order
+  // 1) INSERT order con status='pending' (gli items vanno inseriti PRIMA che lo status
+  //    passi a 'paid', altrimenti il trigger DB di scaricamento non trova gli items)
   const orderPayload = {
     org_id: orgId,
     channel: "cassa",
-    status: "paid",
+    status: "pending",
     subtotal_cents: t.total,
     total_cents: t.total,
     vat_cents: t.vat,
@@ -829,11 +913,18 @@ async function cassaConfirmOrder(){
   if (itErr){
     err("[cassa] insert items", itErr);
     toast("Errore voci ordine: " + itErr.message, "error");
-    // l'ordine è già salvato; lasciamo che sia review manuale
     CASSA.saving = false; return;
   }
 
-  // 3) INSERT transaction (registro cassa)
+  // 3) UPDATE order a 'paid' → fa scattare il trigger che scarica magazzino + registra movimenti
+  const { error: payErr } = await supa()
+    .from("orders").update({ status: "paid" }).eq("id", ord.id);
+  if (payErr){
+    err("[cassa] update paid", payErr);
+    toast("Ordine salvato ma errore pagamento: " + payErr.message, "error");
+  }
+
+  // 4) INSERT transaction (registro cassa)
   await supa().from("transactions").insert({
     org_id: orgId,
     order_id: ord.id,
@@ -842,6 +933,9 @@ async function cassaConfirmOrder(){
     method: CASSA.paymentMethod,
     created_by: BRIO.user.id,
   });
+
+  // Aggiorna l'oggetto locale con il status finale per la receipt
+  ord.status = "paid";
 
   // 4) UI: chiudi modal pagamento, mostra modal successo
   cassaCloseCheckout();
@@ -880,6 +974,340 @@ function cassaCloseReceipt(){
   const m = document.getElementById("receiptModal");
   if (m) m.remove();
 }
+
+/* ============================================================
+ * MODULO KIOSK · self-order totem
+ * ============================================================
+ * Esperienza cliente:
+ *  - Splash iniziale "Tocca per ordinare"
+ *  - Selezione categoria → griglia prodotti grandi
+ *  - Carrello laterale persistente
+ *  - Conferma → numero ordine grande, va alla cassa per pagare
+ *  - Auto-reset dopo 60s di inattività
+ *  - Uscita admin: 4 tap rapidi in alto a destra
+ * ============================================================ */
+const KIOSK = {
+  step: "splash",       // splash | menu | success
+  categories: [],
+  products: [],
+  byCat: {},
+  activeCatId: null,
+  cart: [],
+  lastOrder: null,
+  idleTimer: null,
+  exitTaps: [],
+};
+
+async function renderKioskPage(main){
+  // Sostituisce il container con un fullscreen root
+  document.getElementById("appRoot").innerHTML = '<div class="kiosk-root" id="kioskRoot"></div>';
+
+  await kioskLoadData();
+  kioskGoto("splash");
+
+  // Pre-attiva auto-reset listener
+  ["click","touchstart","keydown"].forEach((ev) => {
+    document.addEventListener(ev, kioskBumpIdle, true);
+  });
+}
+
+async function kioskLoadData(){
+  const orgId = BRIO.org.id;
+  const [catRes, prodRes] = await Promise.all([
+    supa().from("categories").select("*").eq("org_id", orgId).eq("visible", true).order("sort_order"),
+    supa().from("products")
+      .select("*, recipes(qty, ingredient:ingredients(stock_qty, critical_stock_qty))")
+      .eq("org_id", orgId).neq("status", "hidden").order("sort_order"),
+  ]);
+  KIOSK.categories = catRes.data || [];
+  KIOSK.products = prodRes.data || [];
+  KIOSK.byCat = {};
+  KIOSK.products.forEach((p) => {
+    if (!KIOSK.byCat[p.category_id]) KIOSK.byCat[p.category_id] = [];
+    KIOSK.byCat[p.category_id].push(p);
+  });
+  KIOSK.activeCatId = KIOSK.categories.length > 0 ? KIOSK.categories[0].id : null;
+}
+
+function kioskGoto(step){
+  KIOSK.step = step;
+  if (step === "splash"){
+    KIOSK.cart = [];
+    clearTimeout(KIOSK.idleTimer);
+  }
+  kioskRender();
+}
+
+function kioskRender(){
+  const root = document.getElementById("kioskRoot");
+  if (!root) return;
+  let body = "";
+
+  // Trigger uscita admin (hidden corner)
+  const exitTrigger = '<div class="kiosk-exit" data-action="kioskCornerTap"></div>';
+
+  if (KIOSK.step === "splash"){
+    body =
+      '<div class="kiosk-splash" data-action="kioskStart">' +
+        exitTrigger +
+        '<div class="lang"><button>🇮🇹 IT</button><button>🇬🇧 EN</button></div>' +
+        '<div class="logo brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
+        '<div class="tagline">Dal caffè al calice</div>' +
+        '<button class="cta">Tocca per ordinare</button>' +
+      '</div>';
+  } else if (KIOSK.step === "menu"){
+    body = kioskRenderMenu();
+  } else if (KIOSK.step === "success"){
+    body = kioskRenderSuccess();
+  }
+
+  root.innerHTML = body;
+  kioskBumpIdle();
+}
+
+function kioskRenderMenu(){
+  const cats = KIOSK.categories.map((c) => (
+    '<div class="kiosk-cat ' + (c.id === KIOSK.activeCatId ? "active" : "") + '"' +
+    ' data-action="kioskSwitchCat" data-args=\'["' + c.id + '"]\'>' +
+      '<span class="icon">' + (c.icon || "🍽") + '</span>' +
+      '<span>' + escapeHtml(c.name) + '</span>' +
+    '</div>'
+  )).join("");
+
+  const products = (KIOSK.byCat[KIOSK.activeCatId] || []).map((p) => {
+    const avail = kioskProductAvailable(p);
+    const emoji = kioskProductEmoji(p);
+    return '<div class="kiosk-product ' + (avail ? "" : "unavailable") + '"' +
+      ' data-action="' + (avail ? "kioskAddToCart" : "noop") + '" data-args=\'["' + p.id + '"]\'>' +
+      '<div class="photo-area">' + emoji + '</div>' +
+      '<div>' +
+        '<div class="name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="desc">' + escapeHtml(p.description || "") + '</div>' +
+      '</div>' +
+      '<div class="price-row">' +
+        '<div class="price">' + euroFmt(p.price_cents) + '</div>' +
+        '<button class="add-btn">+</button>' +
+      '</div>' +
+    '</div>';
+  }).join("");
+
+  return (
+    '<div class="kiosk-exit" data-action="kioskCornerTap"></div>' +
+    '<div class="kiosk-header">' +
+      '<div class="logo-small"><span class="b">b</span>rio</div>' +
+      '<button class="home-btn" data-action="kioskReset">⟲ Nuovo ordine</button>' +
+    '</div>' +
+    '<div class="kiosk-body">' +
+      '<div class="kiosk-content">' +
+        // Hero offerta (statica per ora, futuro: tabella offers)
+        '<div class="kiosk-hero">' +
+          '<div>' +
+            '<div class="badge">Offerta del giorno</div>' +
+            '<h2>Caffè + brioche · €2,30</h2>' +
+            '<p>Dalle 7:00 alle 10:00 · risparmi €0,20</p>' +
+          '</div>' +
+          '<div class="icon">☕🥐</div>' +
+        '</div>' +
+        '<div class="kiosk-cats">' + cats + '</div>' +
+        '<div class="kiosk-products">' + products + '</div>' +
+      '</div>' +
+      kioskRenderCart() +
+    '</div>'
+  );
+}
+
+function kioskRenderCart(){
+  const totals = kioskCartTotals();
+  if (KIOSK.cart.length === 0){
+    return (
+      '<div class="kiosk-cart">' +
+        '<div class="cart-h"><h3>Il tuo ordine</h3><div class="count">Carrello vuoto</div></div>' +
+        '<div class="cart-l"><div class="cart-empty"><div class="icon">🛒</div>Tocca un prodotto per iniziare</div></div>' +
+        '<div class="cart-f"><button class="cta-pay" disabled>Procedi</button></div>' +
+      '</div>'
+    );
+  }
+  const items = KIOSK.cart.map((r, idx) => (
+    '<div class="citem">' +
+      '<div>' +
+        '<div class="n">' + escapeHtml(r.product_name) + '</div>' +
+        '<div class="u">' + euroFmt(r.unit_price_cents) + ' cad.</div>' +
+        '<div class="qc">' +
+          '<button data-action="kioskDecQty" data-args="[' + idx + ']">−</button>' +
+          '<span class="qty">' + r.qty + '</span>' +
+          '<button data-action="kioskIncQty" data-args="[' + idx + ']">+</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="lt">' + euroFmt(r.unit_price_cents * r.qty) + '</div>' +
+    '</div>'
+  )).join("");
+
+  return (
+    '<div class="kiosk-cart">' +
+      '<div class="cart-h"><h3>Il tuo ordine</h3><div class="count">' + KIOSK.cart.reduce((a, r) => a + r.qty, 0) + ' articoli</div></div>' +
+      '<div class="cart-l">' + items + '</div>' +
+      '<div class="cart-f">' +
+        '<div class="total-line"><span>Imponibile</span><span>' + euroFmt(totals.total - totals.vat) + '</span></div>' +
+        '<div class="total-line"><span>IVA</span><span>' + euroFmt(totals.vat) + '</span></div>' +
+        '<div class="total-line grand"><span>Totale</span><span>' + euroFmt(totals.total) + '</span></div>' +
+        '<button class="cta-pay" data-action="kioskConfirmOrder">Conferma e paga alla cassa</button>' +
+      '</div>' +
+    '</div>'
+  );
+}
+
+function kioskRenderSuccess(){
+  const ord = KIOSK.lastOrder;
+  return (
+    '<div class="kiosk-exit" data-action="kioskCornerTap"></div>' +
+    '<div class="kiosk-success">' +
+      '<div class="ok">✅</div>' +
+      '<h1>Grazie!</h1>' +
+      '<div class="muted" style="font-size:14px;text-transform:uppercase;letter-spacing:.08em;margin-top:8px">Il tuo numero d\'ordine è</div>' +
+      '<div class="num">#' + (ord ? ord.daily_number : "?") + '</div>' +
+      '<div class="msg">Mostra questo numero alla cassa per pagare e ritirare.</div>' +
+      '<div class="countdown" id="kioskCountdown">Tornerò all\'inizio tra <span id="kioskTimer">10</span> secondi</div>' +
+    '</div>'
+  );
+}
+
+function kioskProductAvailable(p){
+  if (p.status === "out_of_stock" || p.status === "hidden") return false;
+  if (!p.recipes || p.recipes.length === 0) return true;
+  for (let i = 0; i < p.recipes.length; i++){
+    const r = p.recipes[i];
+    if (!r.ingredient) continue;
+    if (Number(r.ingredient.stock_qty) <= Number(r.ingredient.critical_stock_qty)) return false;
+  }
+  return true;
+}
+
+function kioskProductEmoji(p){
+  const n = (p.name || "").toLowerCase();
+  if (n.includes("caffè") || n.includes("cappuccino") || n.includes("marocchino")) return "☕";
+  if (n.includes("brioche")) return "🥐";
+  if (n.includes("piadina")) return "🥙";
+  if (n.includes("tramezzino")) return "🥪";
+  if (n.includes("insalat")) return "🥗";
+  if (n.includes("tagliere")) return "🧀";
+  if (n.includes("birra")) return "🍺";
+  if (n.includes("calice") || n.includes("prosecco") || n.includes("gutturnio") || n.includes("vino")) return "🍷";
+  if (n.includes("orzo") || n.includes("ginseng")) return "☕";
+  return "🍽";
+}
+
+function kioskCartTotals(){
+  let subtotal = 0, vat = 0;
+  for (const r of KIOSK.cart){
+    const lt = r.unit_price_cents * r.qty;
+    subtotal += lt;
+    vat += Math.round(lt - (lt / (1 + Number(r.vat_rate) / 100)));
+  }
+  return { subtotal, vat, total: subtotal };
+}
+
+// =========== Azioni ==========
+function kioskStart(){ kioskGoto("menu"); }
+
+function kioskReset(){
+  KIOSK.cart = [];
+  KIOSK.lastOrder = null;
+  kioskGoto("splash");
+}
+
+function kioskSwitchCat(catId){
+  KIOSK.activeCatId = catId;
+  kioskRender();
+}
+
+function kioskAddToCart(productId){
+  const p = KIOSK.products.find((x) => x.id === productId);
+  if (!p) return;
+  const ex = KIOSK.cart.find((c) => c.product_id === productId);
+  if (ex) ex.qty += 1;
+  else KIOSK.cart.push({
+    product_id: p.id,
+    product_name: p.name,
+    unit_price_cents: p.price_cents,
+    vat_rate: p.vat_rate,
+    qty: 1,
+  });
+  kioskRender();
+}
+function kioskIncQty(idx){ KIOSK.cart[idx].qty += 1; kioskRender(); }
+function kioskDecQty(idx){
+  KIOSK.cart[idx].qty -= 1;
+  if (KIOSK.cart[idx].qty <= 0) KIOSK.cart.splice(idx, 1);
+  kioskRender();
+}
+
+async function kioskConfirmOrder(){
+  if (KIOSK.cart.length === 0) return;
+  const t = kioskCartTotals();
+  // INSERT order con status='pending' (paga alla cassa = pending)
+  const { data: ord, error: ordErr } = await supa().from("orders").insert({
+    org_id: BRIO.org.id,
+    channel: "kiosk",
+    status: "pending",
+    subtotal_cents: t.total,
+    total_cents: t.total,
+    vat_cents: t.vat,
+    payment_method: "pending",
+  }).select().single();
+
+  if (ordErr){ err("[kiosk] insert", ordErr); toast("Errore: " + ordErr.message, "error"); return; }
+
+  const items = KIOSK.cart.map((r) => ({
+    order_id: ord.id,
+    product_id: r.product_id,
+    product_name: r.product_name,
+    qty: r.qty,
+    unit_price_cents: r.unit_price_cents,
+    total_cents: r.unit_price_cents * r.qty,
+    vat_rate: r.vat_rate,
+    kds_status: "queued",
+  }));
+  await supa().from("order_items").insert(items);
+
+  KIOSK.lastOrder = ord;
+  kioskGoto("success");
+
+  // Auto-reset dopo 10s
+  let cd = 10;
+  const tick = setInterval(() => {
+    cd--;
+    const el = document.getElementById("kioskTimer");
+    if (el) el.textContent = cd;
+    if (cd <= 0){ clearInterval(tick); kioskReset(); }
+  }, 1000);
+}
+
+// =========== Idle / esci ==========
+function kioskBumpIdle(){
+  clearTimeout(KIOSK.idleTimer);
+  if (KIOSK.step === "menu" && KIOSK.cart.length > 0){
+    // 60s di inattività resetta
+    KIOSK.idleTimer = setTimeout(() => {
+      log("[kiosk] auto-reset per inattività");
+      kioskReset();
+    }, 60000);
+  }
+}
+
+function kioskCornerTap(){
+  KIOSK.exitTaps.push(Date.now());
+  KIOSK.exitTaps = KIOSK.exitTaps.filter((t) => Date.now() - t < 1500);
+  if (KIOSK.exitTaps.length >= 4){
+    KIOSK.exitTaps = [];
+    if (confirm("Uscire dalla modalità Kiosk?")){
+      // Stacca listener idle
+      ["click","touchstart","keydown"].forEach((ev) => document.removeEventListener(ev, kioskBumpIdle, true));
+      navigate("#/");
+    }
+  }
+}
+
+function noop(){}
 
 /* ============================================================
  * MODULO MAGAZZINO

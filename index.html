@@ -495,6 +495,220 @@ main#appContent{
 .receipt-success .hint{ color: var(--text-muted); font-size: 13px; }
 
 /* ============================================================
+   KIOSK · totem self-order
+   ============================================================ */
+.kiosk-root{
+  position: fixed; inset: 0;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-family: var(--font-display);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  z-index: 100;
+}
+.kiosk-exit{
+  position: absolute; top: 0; right: 0;
+  width: 60px; height: 60px;
+  opacity: 0;
+  z-index: 200;
+  cursor: pointer;
+}
+
+/* SPLASH iniziale */
+.kiosk-splash{
+  flex:1; display:flex; flex-direction: column; align-items:center; justify-content:center;
+  text-align:center; padding: 40px;
+  background: linear-gradient(180deg, var(--champagne) 0%, var(--bg-soft) 100%);
+  cursor: pointer;
+}
+.kiosk-splash .logo{ font-size: 140px; line-height: 1; margin-bottom: 8px; }
+.kiosk-splash .tagline{ font-style: italic; color: var(--text-muted); font-size: 22px; margin-bottom: 60px; }
+.kiosk-splash .cta{
+  padding: 22px 56px;
+  background: var(--grad-brio); color: white;
+  border-radius: 999px;
+  font-size: 24px; font-weight: 600;
+  box-shadow: var(--sh-3);
+  animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse{
+  0%, 100%{ transform: scale(1); box-shadow: var(--sh-3); }
+  50%{ transform: scale(1.04); box-shadow: 0 16px 40px rgba(16,185,129,.3); }
+}
+.kiosk-splash .lang{
+  position: absolute; top: 24px; left: 24px;
+  display: flex; gap: 8px;
+}
+.kiosk-splash .lang button{
+  background: rgba(255,255,255,.6); border: 1px solid var(--line);
+  border-radius: 999px; padding: 8px 14px; font-size: 13px; cursor: pointer;
+}
+
+/* HEADER kiosk */
+.kiosk-header{
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 18px 28px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--line);
+}
+.kiosk-header .logo-small{ font-style: italic; font-weight: 700; font-size: 30px; }
+.kiosk-header .logo-small .b{ background: var(--grad-brio); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.kiosk-header .home-btn{ padding: 10px 18px; border-radius: 999px; background: var(--bg-soft); border:0; font-size: 14px; cursor: pointer; }
+
+/* LAYOUT kiosk shopping */
+.kiosk-body{
+  flex:1; overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 0;
+}
+.kiosk-content{ overflow-y: auto; padding: 20px 28px 40px; }
+
+/* HERO offerta */
+.kiosk-hero{
+  background: linear-gradient(120deg, var(--emerald) 0%, var(--midnight) 100%);
+  color: white;
+  border-radius: 20px;
+  padding: 24px 28px;
+  margin-bottom: 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20px;
+}
+.kiosk-hero .badge{ display:inline-block; padding: 4px 12px; background: rgba(255,255,255,.18); border-radius: 999px; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+.kiosk-hero h2{ margin: 0 0 6px; font-size: 26px; font-style: italic; font-weight: 700; }
+.kiosk-hero p{ margin: 0; opacity: .9; font-size: 14px; }
+.kiosk-hero .icon{ font-size: 56px; }
+
+/* CATEGORIE big tabs */
+.kiosk-cats{ display:flex; gap: 12px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 8px; }
+.kiosk-cats::-webkit-scrollbar{ display: none; }
+.kiosk-cat{
+  flex: 0 0 auto;
+  padding: 16px 22px;
+  background: var(--bg-card);
+  border: 2px solid transparent;
+  border-radius: 16px;
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer;
+  font-size: 16px; font-weight: 600;
+  transition: all .15s ease;
+  min-width: 140px;
+  justify-content: center;
+}
+.kiosk-cat:hover{ border-color: var(--smoke); }
+.kiosk-cat.active{ background: var(--onyx); color: var(--champagne); border-color: var(--onyx); }
+.kiosk-cat .icon{ font-size: 26px; }
+
+/* GRIGLIA prodotti big */
+.kiosk-products{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.kiosk-product{
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px 18px 16px;
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .2s ease;
+  position: relative;
+  overflow: hidden;
+  min-height: 180px;
+  display: flex; flex-direction: column; justify-content: space-between;
+}
+.kiosk-product:hover{ transform: translateY(-3px); box-shadow: var(--sh-2); }
+.kiosk-product:active{ transform: scale(.97); }
+.kiosk-product .photo-area{
+  height: 80px; background: var(--bg-soft); border-radius: 12px;
+  display:flex; align-items:center; justify-content:center;
+  font-size: 44px;
+  margin-bottom: 10px;
+}
+.kiosk-product .name{ font-size: 17px; font-weight: 600; line-height: 1.2; margin-bottom: 4px; }
+.kiosk-product .desc{ font-size: 12px; color: var(--text-muted); line-height: 1.3; margin-bottom: 8px; min-height: 32px; }
+.kiosk-product .price-row{ display:flex; justify-content:space-between; align-items:center; }
+.kiosk-product .price{ font-size: 20px; font-weight: 700; color: var(--emerald); }
+.kiosk-product .add-btn{
+  width: 38px; height: 38px; border-radius: 50%;
+  background: var(--onyx); color: var(--champagne);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px; font-weight: 700;
+  border: 0;
+}
+.kiosk-product.unavailable{ opacity: .5; pointer-events: none; }
+.kiosk-product .badge-promo{
+  position: absolute; top: 12px; right: 12px;
+  background: var(--emerald); color: white;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+}
+
+/* CARRELLO kiosk */
+.kiosk-cart{
+  background: var(--bg-card);
+  border-left: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.kiosk-cart .cart-h{
+  padding: 22px 24px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.kiosk-cart .cart-h h3{ margin:0; font-size: 20px; font-weight: 600; font-style: italic; }
+.kiosk-cart .cart-h .count{ color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+.kiosk-cart .cart-l{ flex:1; overflow-y:auto; padding: 12px 18px; }
+.kiosk-cart .cart-empty{ text-align:center; padding: 50px 12px; color: var(--text-dim); }
+.kiosk-cart .cart-empty .icon{ font-size: 56px; opacity: .3; margin-bottom: 12px; }
+.kiosk-cart .citem{ display:grid; grid-template-columns: 1fr auto; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); align-items:start; }
+.kiosk-cart .citem:last-child{ border-bottom: 0; }
+.kiosk-cart .citem .n{ font-weight: 600; font-size: 14px; }
+.kiosk-cart .citem .u{ font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.kiosk-cart .citem .qc{ display: flex; align-items:center; gap: 6px; margin-top: 8px; }
+.kiosk-cart .citem .qc button{
+  width: 32px; height: 32px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--bg-soft);
+  font-size: 18px; cursor: pointer; padding: 0;
+}
+.kiosk-cart .citem .qc .qty{ min-width: 24px; text-align: center; font-weight: 600; }
+.kiosk-cart .citem .lt{ font-size: 15px; font-weight: 700; align-self: end; }
+
+.kiosk-cart .cart-f{
+  padding: 18px 22px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-soft);
+}
+.kiosk-cart .total-line{ display:flex; justify-content:space-between; padding: 4px 0; font-size: 14px; color: var(--text-muted); }
+.kiosk-cart .total-line.grand{ font-size: 22px; color: var(--text); font-weight: 700; padding-top: 6px; }
+.kiosk-cart .cta-pay{
+  width: 100%; padding: 18px;
+  background: var(--grad-brio); color: white;
+  border: 0; border-radius: 14px;
+  font-size: 17px; font-weight: 600;
+  margin-top: 12px;
+  cursor: pointer;
+  box-shadow: var(--sh-2);
+}
+.kiosk-cart .cta-pay:disabled{ opacity:.4; cursor: not-allowed; box-shadow: none; }
+
+/* CONFERMA kiosk */
+.kiosk-success{
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; padding: 40px;
+}
+.kiosk-success .ok{ font-size: 110px; margin-bottom: 8px; }
+.kiosk-success h1{ font-size: 36px; margin: 0 0 4px; }
+.kiosk-success .num{ font-size: 120px; font-weight: 800; color: var(--emerald); line-height: 1; margin: 12px 0; font-style: italic; }
+.kiosk-success .msg{ font-size: 18px; color: var(--text-muted); max-width: 480px; margin: 0 auto 8px; }
+.kiosk-success .countdown{ margin-top: 24px; color: var(--text-dim); font-size: 13px; }
+
+/* Responsive kiosk: tablet portrait */
+@media (max-width: 900px){
+  .kiosk-body{ grid-template-columns: 1fr; }
+  .kiosk-cart{ border-left: 0; border-top: 1px solid var(--line); }
+}
+
+/* ============================================================
    MAGAZZINO
    ============================================================ */
 .stats-row{ display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin-bottom:20px; }
