@@ -99,6 +99,152 @@ function localDateStr(d){
   return dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,"0") + "-" + String(dt.getDate()).padStart(2,"0");
 }
 
+// ============================================================
+// DIALOG (popup brandizzato Brio — sostituisce alert/confirm/prompt)
+// ============================================================
+let _brioDlgSeq = 0;
+
+function brioConfirm(opts){
+  return new Promise((resolve) => {
+    opts = opts || {};
+    const id = "brioDlg-" + (++_brioDlgSeq);
+    const title  = opts.title || "Conferma";
+    const msg    = opts.message || "";
+    const ok     = opts.okLabel || "Conferma";
+    const cancel = opts.cancelLabel || "Annulla";
+    const danger = !!opts.danger;
+    const icon   = opts.icon || (danger ? "⚠️" : "❓");
+    const kind   = danger ? "danger" : (opts.kind || "");
+
+    document.body.insertAdjacentHTML("beforeend",
+      '<div class="brio-dlg-back" id="' + id + '">' +
+        '<div class="brio-dlg ' + escapeHtml(kind) + '">' +
+          '<div class="dlg-head">' +
+            '<div class="dlg-icon">' + icon + '</div>' +
+            '<div class="dlg-title">' + escapeHtml(title) + '</div>' +
+          '</div>' +
+          (msg ? '<div class="dlg-body">' + escapeHtml(msg) + '</div>' : '') +
+          '<div class="dlg-actions">' +
+            '<button class="dlg-cancel" data-res="0">' + escapeHtml(cancel) + '</button>' +
+            '<button class="dlg-ok" data-res="1">' + escapeHtml(ok) + '</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+    const elBack = document.getElementById(id);
+    function close(result){
+      elBack.remove();
+      document.removeEventListener("keydown", onKey, true);
+      resolve(result);
+    }
+    function onKey(e){
+      if (e.key === "Escape"){ e.preventDefault(); close(false); }
+      else if (e.key === "Enter"){ e.preventDefault(); close(true); }
+    }
+    document.addEventListener("keydown", onKey, true);
+    elBack.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-res]");
+      if (btn){ close(btn.getAttribute("data-res") === "1"); }
+      else if (e.target === elBack){ close(false); }
+    });
+  });
+}
+
+function brioAlert(opts){
+  return new Promise((resolve) => {
+    opts = opts || {};
+    const id = "brioDlg-" + (++_brioDlgSeq);
+    const title  = opts.title || "Avviso";
+    const msg    = opts.message || "";
+    const ok     = opts.okLabel || "OK";
+    const kind   = opts.kind || "info";
+    const icon   = opts.icon || (kind === "danger" ? "⚠️" : kind === "warning" ? "⚠️" : "ℹ️");
+
+    document.body.insertAdjacentHTML("beforeend",
+      '<div class="brio-dlg-back" id="' + id + '">' +
+        '<div class="brio-dlg ' + escapeHtml(kind) + '">' +
+          '<div class="dlg-head">' +
+            '<div class="dlg-icon">' + icon + '</div>' +
+            '<div class="dlg-title">' + escapeHtml(title) + '</div>' +
+          '</div>' +
+          (msg ? '<div class="dlg-body">' + escapeHtml(msg) + '</div>' : '') +
+          '<div class="dlg-actions">' +
+            '<button class="dlg-ok" data-res="1" style="flex:1">' + escapeHtml(ok) + '</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+    const elBack = document.getElementById(id);
+    function close(){
+      elBack.remove();
+      document.removeEventListener("keydown", onKey, true);
+      resolve();
+    }
+    function onKey(e){
+      if (e.key === "Escape" || e.key === "Enter"){ e.preventDefault(); close(); }
+    }
+    document.addEventListener("keydown", onKey, true);
+    elBack.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-res]");
+      if (btn || e.target === elBack){ close(); }
+    });
+  });
+}
+
+function brioPrompt(opts){
+  return new Promise((resolve) => {
+    opts = opts || {};
+    const id = "brioDlg-" + (++_brioDlgSeq);
+    const title  = opts.title || "Inserisci valore";
+    const msg    = opts.message || "";
+    const ph     = opts.placeholder || "";
+    const value  = opts.value || "";
+    const ok     = opts.okLabel || "Conferma";
+    const cancel = opts.cancelLabel || "Annulla";
+    const icon   = opts.icon || "✏️";
+
+    document.body.insertAdjacentHTML("beforeend",
+      '<div class="brio-dlg-back" id="' + id + '">' +
+        '<div class="brio-dlg">' +
+          '<div class="dlg-head">' +
+            '<div class="dlg-icon">' + icon + '</div>' +
+            '<div class="dlg-title">' + escapeHtml(title) + '</div>' +
+          '</div>' +
+          (msg ? '<div class="dlg-body">' + escapeHtml(msg) + '</div>' : '') +
+          '<div class="dlg-input">' +
+            '<input type="text" placeholder="' + escapeHtml(ph) + '" value="' + escapeHtml(value) + '" />' +
+          '</div>' +
+          '<div class="dlg-actions">' +
+            '<button class="dlg-cancel" data-res="0">' + escapeHtml(cancel) + '</button>' +
+            '<button class="dlg-ok" data-res="1">' + escapeHtml(ok) + '</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+    const elBack = document.getElementById(id);
+    const input = elBack.querySelector("input");
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+    function close(result){
+      elBack.remove();
+      document.removeEventListener("keydown", onKey, true);
+      resolve(result);
+    }
+    function onKey(e){
+      if (e.key === "Escape"){ e.preventDefault(); close(null); }
+      else if (e.key === "Enter"){ e.preventDefault(); close(input.value); }
+    }
+    document.addEventListener("keydown", onKey, true);
+    elBack.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-res]");
+      if (btn){
+        close(btn.getAttribute("data-res") === "1" ? input.value : null);
+      } else if (e.target === elBack){
+        close(null);
+      }
+    });
+  });
+}
+
 // Toast
 function toast(msg, kind){
   const host = document.getElementById("toastHost");
@@ -715,9 +861,16 @@ function cassaDecQty(idx){
   cassaRenderCart();
 }
 function cassaRemoveRow(idx){ CASSA.cart.splice(idx, 1); cassaRenderCart(); }
-function cassaClearCart(){
+async function cassaClearCart(){
   if (CASSA.cart.length === 0) return;
-  if (!confirm("Svuotare il carrello?")) return;
+  const ok = await brioConfirm({
+    title: "Svuotare il carrello?",
+    message: "L'ordine in corso verrà cancellato.",
+    okLabel: "Svuota",
+    danger: true,
+    icon: "🗑️",
+  });
+  if (!ok) return;
   CASSA.cart = [];
   cassaRenderCart();
 }
@@ -1372,7 +1525,7 @@ function kioskRenderPersonalize(){
         '</div>' +
         '<div class="kpz-body">' +
           (customs.length === 0
-            ? '<div class="muted text-center" style="padding:30px;font-size:14px">Questo prodotto non ha personalizzazioni. Aggiungilo direttamente.</div>'
+            ? '<div class="muted text-center" style="padding:30px;font-size:14px">' + escapeHtml(kioskT("personalize.none")) + '</div>'
             : '<div class="kpz-section">' +
                 '<div class="lbl">' + escapeHtml(kioskT("personalize.options")) + '</div>' +
                 opts +
@@ -1380,8 +1533,8 @@ function kioskRenderPersonalize(){
           ) +
         '</div>' +
         '<div class="kpz-foot">' +
-          '<button class="cancel" data-action="kioskCancelPersonalize">Annulla</button>' +
-          '<button class="add" data-action="kioskConfirmPersonalize">Aggiungi · ' + euroFmt(finalPrice) + '</button>' +
+          '<button class="cancel" data-action="kioskCancelPersonalize">' + escapeHtml(kioskT("personalize.cancel")) + '</button>' +
+          '<button class="add" data-action="kioskConfirmPersonalize">' + escapeHtml(kioskT("personalize.add")) + ' · ' + euroFmt(finalPrice) + '</button>' +
         '</div>' +
       '</div>' +
     '</div>'
@@ -1554,9 +1707,17 @@ function kioskCartTotals(){
 // =========== Azioni ==========
 function kioskStart(){ kioskGoto("menu"); }
 
-function kioskReset(){
+async function kioskReset(){
   if (KIOSK.cart.length > 0){
-    if (!confirm("Annullare l'ordine corrente e ricominciare?")) return;
+    const ok = await brioConfirm({
+      title: "Ricominciare?",
+      message: "L'ordine corrente verrà annullato.",
+      okLabel: "Ricomincia",
+      cancelLabel: "Continua a ordinare",
+      danger: true,
+      icon: "↻",
+    });
+    if (!ok) return;
   }
   KIOSK.cart = [];
   KIOSK.lastOrder = null;
@@ -1651,9 +1812,17 @@ function kioskRemoveRow(idx){
   KIOSK.cart.splice(idx, 1);
   kioskPersistCart(); kioskRender();
 }
-function kioskClearCart(){
+async function kioskClearCart(){
   if (KIOSK.cart.length === 0) return;
-  if (!confirm("Annullare tutto l'ordine?")) return;
+  const ok = await brioConfirm({
+    title: "Annullare l'ordine?",
+    message: "Tutti gli articoli nel carrello verranno rimossi.",
+    okLabel: "Annulla ordine",
+    cancelLabel: "No, continua",
+    danger: true,
+    icon: "🗑️",
+  });
+  if (!ok) return;
   KIOSK.cart = [];
   sessionStorage.removeItem(KIOSK_SS_KEY);
   kioskRender();
@@ -1819,13 +1988,19 @@ function kioskOnVisibility(){
   }
 }
 
-function kioskCornerTap(){
+async function kioskCornerTap(){
   KIOSK.exitTaps.push(Date.now());
   KIOSK.exitTaps = KIOSK.exitTaps.filter((t) => Date.now() - t < 1500);
   if (KIOSK.exitTaps.length >= 4){
     KIOSK.exitTaps = [];
-    if (confirm("Uscire dalla modalità Kiosk?")){
-      // Stacca listener idle
+    const ok = await brioConfirm({
+      title: "Uscire dalla modalità Kiosk?",
+      message: "Tornerai alla dashboard amministratore.",
+      okLabel: "Esci",
+      cancelLabel: "Rimani",
+      icon: "🔓",
+    });
+    if (ok){
       ["click","touchstart","keydown"].forEach((ev) => document.removeEventListener(ev, kioskBumpIdle, true));
       navigate("#/");
     }
@@ -2197,7 +2372,14 @@ async function onMagWasteSubmit(form){
   const ing = MAGAZZINO.ingredients.find((i) => i.id === MAGAZZINO.detailId);
   if (!ing) return;
   if (qty > Number(ing.stock_qty)){
-    if (!confirm("Stai sprecando più di quanto sia in giacenza. Continuare?")) return;
+    const ok = await brioConfirm({
+      title: "Quantità superiore alla giacenza",
+      message: "Stai registrando uno spreco di " + numFmt(qty,0) + " " + ing.unit + " ma in magazzino ne risultano solo " + numFmt(ing.stock_qty,0) + ". La giacenza scenderà a 0.",
+      okLabel: "Continua",
+      danger: true,
+      icon: "⚠️",
+    });
+    if (!ok) return;
   }
 
   const btn = form.querySelector('button[type="submit"]');
