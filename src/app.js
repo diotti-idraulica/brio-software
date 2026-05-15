@@ -2112,9 +2112,12 @@ function noop(){}
  * Timer per ogni card con soglie giallo/rosso (>2m/>4m in coda).
  * ============================================================ */
 const KDS = {
-  orders: [],     // tutti gli ordini attivi della giornata
+  orders: [],         // tutti gli ordini attivi della giornata
+  knownIds: null,     // Set di ID già visti (null = primo load)
+  newArrivals: new Set(), // ID con pulse "nuovo ordine" attivo (3s)
   rtChan: null,
-  tickHandle: null,  // setInterval per aggiornare i timer
+  tickHandle: null,   // setInterval per aggiornare i timer
+  autoPrepInFlight: new Set(), // ID in fase di auto-preparing (evita doppia chiamata)
 };
 
 async function renderKdsPage(main){
@@ -2146,9 +2149,68 @@ async function kdsLoadOrders(){
     .in("status", ["pending","paid","preparing","ready"])
     .order("created_at", { ascending: true });
   if (error){ err("[kds]", error); toast("Errore caricamento KDS", "error"); return; }
-  KDS.orders = data || [];
+
+  const orders = data || [];
+  const isFirstLoad = KDS.knownIds === null;
+  const currentIds = new Set(orders.map((o) => o.id));
+
+  // Identifica nuovi ordini (presenti ora, non presenti prima)
+  // Salta gli "ordini da incassare alla cassa" (pending kiosk) perché non sono cucina
+  const newOrders = isFirstLoad ? [] : orders.filter((o) => !KDS.knownIds.has(o.id) && o.status !== "pending");
+
+  KDS.knownIds = currentIds;
+  KDS.orders = orders;
+
+  // Alert audio + visual quando arrivano nuovi ordini
+  if (newOrders.length > 0){
+    newOrders.forEach((o) => KDS.newArrivals.add(o.id));
+    kdsAlertNewOrders(newOrders.length);
+    // Dopo 3.5s rimuovi le animazioni
+    setTimeout(() => {
+      newOrders.forEach((o) => KDS.newArrivals.delete(o.id));
+      if (location.hash === "#/kds") kdsRender();
+    }, 3500);
+  }
+
+  // Auto-preparing: ordini in stato 'paid' passano automaticamente a 'preparing'.
+  // L'operatrice non deve cliccare "Inizia". Resta solo "Pronto" → "Consegnato".
+  const toAutoPrep = orders.filter((o) => o.status === "paid" && !KDS.autoPrepInFlight.has(o.id));
+  toAutoPrep.forEach((o) => {
+    KDS.autoPrepInFlight.add(o.id);
+    supa().from("orders")
+      .update({ status: "preparing", prep_started_at: new Date().toISOString() })
+      .eq("id", o.id)
+      .then(({ error }) => {
+        KDS.autoPrepInFlight.delete(o.id);
+        if (error) err("[kds] auto-preparing", error);
+        // Il realtime ri-triggera kdsLoadOrders + render
+      });
+  });
+
   const sub = document.getElementById("kdsSub");
   if (sub) sub.textContent = KDS.orders.length + " ordini attivi · " + dateFmt(new Date());
+}
+
+// Beep più squillante (3 toni crescenti) + toast quando arriva un ordine al KDS
+function kdsAlertNewOrders(count){
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const freqs = [880, 1175, 1568]; // A5, D6, G6 (arpeggio in salita)
+    freqs.forEach((freq, i) => {
+      const t0 = ctx.currentTime + i * 0.13;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.001, t0);
+      g.gain.exponentialRampToValueAtTime(0.25, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.22);
+      o.start(t0);
+      o.stop(t0 + 0.25);
+    });
+  } catch(e){ /* AudioContext può fallire se la pagina non ha mai ricevuto interaction */ }
+  toast("🔔 " + (count > 1 ? count + " nuovi ordini" : "Nuovo ordine in cucina"), "success");
 }
 
 function kdsRender(){
@@ -2175,13 +2237,12 @@ function kdsRender(){
           '<div class="kds-grid">' + pending.map((o) => kdsCard(o, "pending-pay")).join("") + '</div>' +
         '</div>'
       : '') +
-    '<div class="kds-section">' +
-      '<h3>⏳ In coda <span class="badge">' + queued.length + '</span></h3>' +
-      (queued.length > 0
-        ? '<div class="kds-grid">' + queued.map((o) => kdsCard(o, "queued")).join("") + '</div>'
-        : '<div class="kds-empty">Nessun ordine in coda.</div>'
-      ) +
-    '</div>' +
+    (queued.length > 0
+      ? '<div class="kds-section">' +
+          '<h3>⏳ In arrivo <span class="badge">' + queued.length + '</span></h3>' +
+          '<div class="kds-grid">' + queued.map((o) => kdsCard(o, "queued")).join("") + '</div>' +
+        '</div>'
+      : '') +
     '<div class="kds-section">' +
       '<h3>🔥 In preparazione <span class="badge">' + prep.length + '</span></h3>' +
       (prep.length > 0
@@ -2236,8 +2297,10 @@ function kdsCard(order, kind){
     action = '<div class="info-msg">Pagamento in cassa</div>';
   }
 
+  const newCls = KDS.newArrivals.has(order.id) ? " new-arrival" : "";
+
   return (
-    '<div class="kds-card ' + kind + warnClass + '">' +
+    '<div class="kds-card ' + kind + warnClass + newCls + '">' +
       '<div class="top">' +
         '<div class="num">#' + order.daily_number + '</div>' +
         '<div class="ch">' + channelLabel + '</div>' +
@@ -3610,7 +3673,8 @@ function localDateStr(date){
 const CHIUSURA = {
   date: null,          // YYYY-MM-DD
   loading: false,
-  expected: null,      // riga daily_cash_expected
+  expected: null,      // riga daily_cash_expected (per riconciliazione metodi)
+  totals: null,        // riga daily_revenue (per totali del giorno: ordini, fatturato)
   existing: null,      // riga daily_close se già chiusa
   cogsToday: 0,
   topToday: [],
@@ -3649,8 +3713,9 @@ async function chiusuraLoad(){
   const date = CHIUSURA.date;
 
   try {
-    const [expRes, closeRes, cogsRes, topRes] = await Promise.all([
+    const [expRes, totRes, closeRes, cogsRes, topRes] = await Promise.all([
       supa().from("daily_cash_expected").select("*").eq("org_id", orgId).eq("daily_date", date).maybeSingle(),
+      supa().from("daily_revenue").select("*").eq("org_id", orgId).eq("daily_date", date).maybeSingle(),
       supa().from("daily_close").select("*").eq("org_id", orgId).eq("close_date", date).maybeSingle(),
       supa().from("daily_cogs").select("cogs_cents").eq("org_id", orgId).eq("cogs_date", date).maybeSingle(),
       supa().from("order_items").select("product_name, qty, total_cents, orders!inner(org_id, daily_date, status)")
@@ -3659,6 +3724,7 @@ async function chiusuraLoad(){
     ]);
 
     CHIUSURA.expected = expRes.data || { cash_cents: 0, card_cents: 0, voucher_cents: 0, total_cents: 0, orders_count: 0, change_given_cents: 0 };
+    CHIUSURA.totals = totRes.data || { revenue_cents: 0, orders_count: 0, avg_ticket_cents: 0 };
     CHIUSURA.existing = closeRes.data || null;
     CHIUSURA.cogsToday = Number(cogsRes.data ? cogsRes.data.cogs_cents : 0);
 
@@ -3703,6 +3769,7 @@ function chiusuraRender(){
   const body = document.getElementById("chiusuraBody");
   if (!body) return;
   const exp = CHIUSURA.expected;
+  const totals = CHIUSURA.totals || { revenue_cents: 0, orders_count: 0 };
   const closed = !!CHIUSURA.existing;
   const isToday = CHIUSURA.date === localDateStr(new Date());
 
@@ -3713,9 +3780,14 @@ function chiusuraRender(){
   const diffCard = countedCard - Number(exp.card_cents || 0);
   const diffVoucher = countedVoucher - Number(exp.voucher_cents || 0);
   const countedTotal = countedCash + countedCard + countedVoucher;
-  const expectedTotal = Number(exp.total_cents || 0);
-  const margin = expectedTotal - CHIUSURA.cogsToday;
-  const foodCostPct = expectedTotal > 0 ? (CHIUSURA.cogsToday / expectedTotal) * 100 : 0;
+  // Riconciliazione: confronto sul subtotale dei metodi tracciati (cash/card/voucher), che è
+  // contenuto in daily_cash_expected. Esclude ordini con payment_method='pending' (kiosk paga in cassa).
+  const reconciledTotal = Number(exp.total_cents || 0);
+  // Totale del giorno: TUTTI gli ordini conclusi (anche pending payment), per il riepilogo informativo.
+  const dayTotal = Number(totals.revenue_cents || 0);
+  const dayOrders = Number(totals.orders_count || 0);
+  const margin = dayTotal - CHIUSURA.cogsToday;
+  const foodCostPct = dayTotal > 0 ? (CHIUSURA.cogsToday / dayTotal) * 100 : 0;
 
   body.innerHTML =
     (closed ? '<div class="chiusura-locked">🔒 Chiusura già salvata il ' + (CHIUSURA.existing.closed_at ? dateFmt(CHIUSURA.existing.closed_at) + " " + timeFmt(CHIUSURA.existing.closed_at) : dateFmt(CHIUSURA.existing.close_date)) + '. Puoi rivedere ma non modificare.</div>' : "") +
@@ -3725,8 +3797,8 @@ function chiusuraRender(){
         '<div class="dash-section">' +
           '<h3>Riepilogo del giorno</h3>' +
           '<div class="ch-stats">' +
-            chStat("Ordini", numFmt(Number(exp.orders_count || 0), 0)) +
-            chStat("Fatturato", euroFmt(expectedTotal)) +
+            chStat("Ordini", numFmt(dayOrders, 0)) +
+            chStat("Fatturato", euroFmt(dayTotal)) +
             chStat("Costo materie", euroFmt(CHIUSURA.cogsToday)) +
             chStat("Margine", euroFmt(margin), foodCostPct > 31 ? "warn" : "") +
             chStat("Food cost", numFmt(foodCostPct, 1) + "%", foodCostPct > 31 ? "warn" : "") +
@@ -3839,11 +3911,12 @@ async function chiusuraSave(){
   CHIUSURA.saving = true;
   const orgId = BRIO.org.id;
   const exp = CHIUSURA.expected || {};
+  const tot = CHIUSURA.totals || {};
   const cCash = parseEuroInput(CHIUSURA.counted.cash);
   const cCard = parseEuroInput(CHIUSURA.counted.card);
   const cVouch = parseEuroInput(CHIUSURA.counted.voucher);
-  const ordersCount = Number(exp.orders_count || 0);
-  const totalExpected = Number(exp.total_cents || 0);
+  const ordersCount = Number(tot.orders_count || 0);
+  const totalExpected = Number(tot.revenue_cents || 0);
   const avgTicket = ordersCount > 0 ? Math.round(totalExpected / ordersCount) : 0;
 
   const payload = {
