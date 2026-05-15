@@ -91,6 +91,13 @@ function timeFmt(d){
   if (isNaN(dt)) return "—";
   return dt.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 }
+// YYYY-MM-DD in fuso orario LOCALE (NON UTC). Da usare per i campi `date` di Postgres
+// dove abbiamo salvato `current_date`. Evita off-by-one quando si è ore prima della
+// mezzanotte UTC ma giorno successivo locale (o viceversa).
+function localDateStr(d){
+  const dt = d ? (d instanceof Date ? d : new Date(d)) : new Date();
+  return dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,"0") + "-" + String(dt.getDate()).padStart(2,"0");
+}
 
 // Toast
 function toast(msg, kind){
@@ -419,15 +426,15 @@ async function loadHomeOggi(){
   const host = document.getElementById("homeOggi");
   if (!host) return;
   const today = new Date();
-  today.setHours(0,0,0,0);
-  const todayISO = today.toISOString();
+  const todayStr = localDateStr(today);
 
   // Query: ordini paid di oggi + righe (per top prodotti)
+  // NB: usiamo localDateStr (NO toISOString) per evitare off-by-one timezone
   const { data: orders, error } = await supa()
     .from("orders")
     .select("id, daily_number, total_cents, status, channel, created_at, order_items(qty, product_name)")
     .eq("org_id", BRIO.org.id)
-    .eq("daily_date", today.toISOString().slice(0,10))
+    .eq("daily_date", todayStr)
     .in("status", ["paid","preparing","ready","delivered"])
     .order("created_at", { ascending: false });
 
@@ -1082,7 +1089,8 @@ function kioskRender(){
         '<div class="tagline">Dal caffè al calice</div>' +
         '<button class="cta">Tocca per ordinare</button>' +
       '</div>';
-  } else if (KIOSK.step === "menu"){
+  } else if (KIOSK.step === "menu" || KIOSK.step === "personalize"){
+    // In personalize il menu rimane visibile come sfondo; la sheet viene aggiunta sopra
     body = kioskRenderMenu();
   } else if (KIOSK.step === "success"){
     body = kioskRenderSuccess();
@@ -1148,39 +1156,73 @@ function kioskRenderMenu(){
 
 // =========== HERO time-based offerta ==========
 function kioskRenderHero(){
-  const hr = new Date().getHours();
-  let badge, title, msg, icon;
-  if (hr >= 7 && hr < 11){
-    badge = "Offerta colazione";
-    title = "Caffè + brioche · €2,30";
-    msg = "Fino alle 10:00 · risparmi €0,20";
-    icon = "☕🥐";
-  } else if (hr >= 11 && hr < 15){
-    badge = "Menù pranzo";
-    title = "Piadina + bevanda · €7,50";
-    msg = "Pranzo veloce 11:30-14:30 · risparmi €0,50";
-    icon = "🥙🥤";
-  } else if (hr >= 17 && hr < 20){
-    badge = "Aperitivo del giorno";
-    title = "Birra + tagliere mini · €8,50";
-    msg = "Happy hour 17:30-19:30 · risparmi €1,00";
-    icon = "🍺🧀";
-  } else {
-    badge = "Sempre con te";
-    title = "Caffè in qualsiasi momento";
-    msg = "Vieni quando vuoi · siamo aperti";
-    icon = "☕";
-  }
+  const offer = kioskCurrentOffer();
+  if (!offer) return "";
+  const action = offer.combo && offer.combo.length > 0 ? "kioskAddCombo" : "";
+  const args = offer.combo ? JSON.stringify(offer.combo) : "[]";
   return (
-    '<div class="kiosk-hero">' +
+    '<div class="kiosk-hero" ' + (action ? 'data-action="' + action + '" data-args=\'' + args.replace(/'/g, "&#39;") + '\' style="cursor:pointer"' : '') + '>' +
       '<div>' +
-        '<div class="badge">' + escapeHtml(badge) + '</div>' +
-        '<h2>' + escapeHtml(title) + '</h2>' +
-        '<p>' + escapeHtml(msg) + '</p>' +
+        '<div class="badge">' + escapeHtml(offer.badge) + '</div>' +
+        '<h2>' + escapeHtml(offer.title) + '</h2>' +
+        '<p>' + escapeHtml(offer.msg) + '</p>' +
       '</div>' +
-      '<div class="icon">' + icon + '</div>' +
+      '<div class="icon">' + offer.icon + '</div>' +
     '</div>'
   );
+}
+
+/**
+ * Offerta corrente time-based.
+ * Restituisce { badge, title, msg, icon, combo: [sku, ...] }
+ * combo = lista SKU da aggiungere al carrello con tap
+ */
+function kioskCurrentOffer(){
+  const hr = new Date().getHours();
+  if (hr >= 7 && hr < 11){
+    return {
+      badge: "Offerta colazione",
+      title: "Caffè + brioche",
+      msg: "Tocca per aggiungere al carrello",
+      icon: "☕🥐",
+      combo: ["CAF-001","CAF-010"],
+    };
+  }
+  if (hr >= 11 && hr < 15){
+    return {
+      badge: "Menù pranzo",
+      title: "Piadina classica + bevanda",
+      msg: "Tocca per aggiungere · pranzo veloce 11:30-14:30",
+      icon: "🥙🥤",
+      combo: ["PRA-001","BEV-001"],
+    };
+  }
+  if (hr >= 17 && hr < 20){
+    return {
+      badge: "Aperitivo del giorno",
+      title: "Calice + tagliere mini",
+      msg: "Tocca per aggiungere · happy hour 17:30-19:30",
+      icon: "🍷🧀",
+      combo: ["APE-010","PRA-011"],
+    };
+  }
+  return {
+    badge: "Sempre con te",
+    title: "Esplora il menu Brio",
+    msg: "Scegli e personalizza",
+    icon: "✨",
+    combo: null,
+  };
+}
+
+// Aggiunge i prodotti combo al carrello (chiamato dal tap sull'hero)
+function kioskAddCombo(skus){
+  if (!Array.isArray(skus) || skus.length === 0) return;
+  skus.forEach((sku) => {
+    const p = KIOSK.products.find((x) => x.sku === sku);
+    if (p) kioskAddToCart(p, []);
+  });
+  toast("Offerta aggiunta al carrello", "success");
 }
 
 // =========== PERSONALIZZAZIONE (bottom sheet) ==========

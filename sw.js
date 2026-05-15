@@ -2,13 +2,12 @@
 // Strategia: network-first per app.js/HTML (per avere sempre l'ultima versione),
 // cache-first per assets statici. Estendibile in futuro per modalità offline cassa.
 
-const CACHE_NAME = "brio-v1";
+const CACHE_NAME = "brio-v2";
 const STATIC_ASSETS = [
   "/",
   "/index.html",
   "/manifest.json",
-  "/icon-192.png",
-  "/icon-512.png",
+  "/icon.svg",
 ];
 
 self.addEventListener("install", (event) => {
