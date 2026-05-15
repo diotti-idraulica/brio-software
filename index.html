@@ -386,15 +386,31 @@ main#appContent{
   background: var(--smoke); color: var(--text-muted);
   border-radius: 4px; font-weight: 500;
 }
-.product-tile.unavailable{ opacity: .4; cursor: not-allowed; }
+/* Stock badge come fascetta superiore (non si sovrappone al nome) */
+.product-tile{ padding-top: 0; overflow: hidden; }
+.product-tile > .name{ margin-top: 2px; }
 .product-tile .stock-badge{
-  position: absolute; top: 8px; left: 8px;
-  font-size: 10px; padding: 3px 7px;
-  border-radius: 4px; font-weight: 600;
-  letter-spacing: .02em; text-transform: uppercase;
+  display: block;
+  margin: 0 -12px 8px -12px;
+  padding: 6px 10px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase;
+  text-align: center;
 }
-.product-tile .stock-badge.stock-low{ background: rgba(245,158,11,.18); color: #B45309; }
-.product-tile .stock-badge.stock-out{ background: rgba(220,38,38,.12); color: var(--danger); }
+.product-tile .stock-badge.stock-low{ background: #FEF3C7; color: #92400E; }
+.product-tile .stock-badge.stock-out{ background: #FEE2E2; color: var(--danger); }
+
+/* Tile in stato esaurito/limite: sfondo rosso chiaro, nome leggibile */
+.product-tile.unavailable{
+  cursor: not-allowed;
+  background: #FEF2F2;
+  border-color: rgba(220,38,38,.35);
+}
+.product-tile.unavailable .name{ color: var(--text); opacity: .85; }
+.product-tile.unavailable .price{ color: var(--danger); text-decoration: line-through; opacity: .7; }
+/* Padding-top normale per i tile con badge (la fascetta fa il suo lavoro) */
+.product-tile:has(.stock-badge){ padding-top: 0; }
+.product-tile:not(:has(.stock-badge)){ padding-top: 14px; }
 
 /* Carrello */
 .cassa-cart{
@@ -690,7 +706,17 @@ main#appContent{
   font-size: 22px; font-weight: 700;
   border: 0;
 }
-.kiosk-product.unavailable{ opacity: .5; pointer-events: none; }
+.kiosk-product.unavailable{
+  pointer-events: none;
+  background: #FEF2F2;
+  border-color: rgba(220,38,38,.35);
+}
+.kiosk-product.unavailable .name{ color: var(--text); opacity: .85; }
+.kiosk-product.unavailable .desc{ opacity: .55; }
+.kiosk-product.unavailable .photo-area{ filter: grayscale(.6); opacity: .55; }
+.kiosk-product.unavailable .price{ text-decoration: line-through; color: var(--danger); opacity: .8; }
+.kiosk-product.unavailable .add-btn{ background: rgba(220,38,38,.18); color: var(--danger); }
+
 .kiosk-product .badge-promo{
   position: absolute; top: 12px; right: 12px;
   background: var(--emerald); color: white;
@@ -699,11 +725,12 @@ main#appContent{
 }
 .kiosk-product .kiosk-stock-badge{
   position: absolute; top: 12px; left: 12px;
-  padding: 4px 10px; border-radius: 999px;
+  padding: 5px 12px; border-radius: 999px;
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  z-index: 2;
 }
-.kiosk-product .kiosk-stock-badge.low{ background: #FEF3C7; color: #B45309; }
-.kiosk-product .kiosk-stock-badge.out{ background: #FEE2E2; color: var(--danger); }
+.kiosk-product .kiosk-stock-badge.low{ background: #FEF3C7; color: #92400E; border: 1px solid #FCD34D; }
+.kiosk-product .kiosk-stock-badge.out{ background: #FEE2E2; color: var(--danger); border: 1px solid rgba(220,38,38,.35); }
 
 /* CARRELLO kiosk */
 .kiosk-cart{
