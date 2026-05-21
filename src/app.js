@@ -1306,7 +1306,6 @@ const KIOSK_QUICK_BUTTONS = [
 
 // Hero image grande (sopra al CTA) e featured cards (sotto al CTA) per fascia.
 // Foto reali HD in /brand/prodotti/ (sincronizzate da prodotti/ via tools/sync_prodotti.py).
-// Fallback /brand/food/ per le foto generiche del moodboard.
 const KIOSK_HERO_IMAGE = {
   mattina:   "/brand/prodotti/cappuccino-brioche-cioccolato.jpg",
   pranzo:    "/brand/prodotti/piadina-coppa-piacentina-rucola-e-squacquerone.jpg",
@@ -1327,10 +1326,10 @@ const KIOSK_FEATURED = {
     { labelIt: "Bibite",     labelEn: "Drinks",      img: "/brand/prodotti/acqua-naturale.jpg",                                                 cat: "bevande" },
   ],
   aperitivo: [
-    { labelIt: "Birre",     labelEn: "Beers",     img: "/brand/food/birra-menabrea-clean.jpg",        cat: "aperitivo" },
-    { labelIt: "Vini",      labelEn: "Wines",     img: "/brand/food/calice-prosecco-clean.jpg",       cat: "aperitivo" },
-    { labelIt: "Taglieri",  labelEn: "Platters",  img: "/brand/prodotti/tagliere-mini.jpg",           cat: "aperitivo" },
-    { labelIt: "Aperitivi", labelEn: "Aperitifs", img: "/brand/food/stuzzichini-aperitivo-clean.jpg", cat: "aperitivo" },
+    { labelIt: "Birre",     labelEn: "Beers",     img: "/brand/prodotti/birra-menabrea.jpg",                                                cat: "aperitivo" },
+    { labelIt: "Vini",      labelEn: "Wines",     img: "/brand/prodotti/calice-prosecco.jpg",                                               cat: "aperitivo" },
+    { labelIt: "Taglieri",  labelEn: "Platters",  img: "/brand/prodotti/tagliere-mini.jpg",                                                 cat: "aperitivo" },
+    { labelIt: "Aperitivi", labelEn: "Aperitifs", img: "/brand/prodotti/tagliere-coppa-piacentina-salame-piacentino-pancetta-piacentina.jpg", cat: "aperitivo" },
   ],
 };
 
