@@ -783,7 +783,7 @@ main#appContent{
   padding: 56px 28px 20px;
   position: relative;
   cursor: pointer;
-  overflow-y: auto;
+  overflow: hidden;
   transition: background 1.2s ease, color 1.2s ease;
 }
 /* Variant per fascia · "soft luxury" pulito, no gradient pesanti */
@@ -805,17 +805,17 @@ main#appContent{
 .kiosk-splash.kiosk-dp-aperitivo .quick-btn{ background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.12); color: var(--champagne); }
 .kiosk-splash.kiosk-dp-aperitivo .quick-btn.active{ background: var(--grad-brio); color: white; border-color: transparent; }
 
-/* Chip orario in cima */
+/* Chip orario in cima · sopra al wallpaper foto */
 .kiosk-dp-chip{
   position: absolute; top: 28px; left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px;
-  background: rgba(255,255,255,.85);
+  background: rgba(255,255,255,.92);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 8px 18px 8px 14px;
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   box-shadow: var(--sh-1);
-  z-index: 2;
+  z-index: 4;
 }
 .kiosk-dp-chip .emoji{ font-size: 22px; line-height: 1; }
 .kiosk-dp-chip .dp-label{ font-size: 12px; font-weight: 800; letter-spacing: .12em; color: var(--onyx); }
@@ -914,6 +914,8 @@ main#appContent{
   display: flex; flex-direction: column; align-items: stretch;
   text-align: left;
   padding-top: 0;
+  position: relative;
+  z-index: 3; /* sopra alla foto wallpaper e ai 2 overlay */
 }
 
 /* Topbar: logo a sinistra, lang dropdown a destra */
@@ -975,48 +977,77 @@ main#appContent{
 .kiosk-splash.kiosk-dp-aperitivo .lang-menu button{ color: var(--champagne); }
 .kiosk-splash.kiosk-dp-aperitivo .lang-menu button:hover{ background: rgba(255,255,255,.08); }
 
-/* Hero image food · FULL-BLEED edge-to-edge del display kiosk (mockup target).
-   Esce dal max-width del totem (700px) usando margin-inline calc per occupare
-   100vw, poi sfuma in basso nel background. Nessun border laterale. */
-.kt-hero-img{
-  position: relative;
-  /* Trick "full-bleed": foto larga 100vw centrata, ignora il max-width del parent */
-  width: 100vw;
-  max-width: 100vw;
-  margin-left: calc(50% - 50vw);
-  margin-right: calc(50% - 50vw);
-  height: clamp(360px, 50vh, 580px);
-  border-radius: 0;
+/* ============================================================
+   FOTO HERO COME WALLPAPER · sotto l'interfaccia (mockup target)
+   La foto vive DIETRO l'UI. 2 overlay (top + bottom) sfumano nel champagne
+   per garantire leggibilità del testo. La foto resta visibile al centro.
+   ============================================================ */
+.hero-image-bg{
+  position: absolute; inset: 0;
   background-size: cover;
   background-position: center;
-  background-color: var(--bg-soft);
-  margin-bottom: 8px;
-  overflow: hidden;
-  /* Fade out verso il basso (la foto si dissolve nel background del totem) */
-  -webkit-mask-image: linear-gradient(180deg, black 0%, black 50%, rgba(0,0,0,.6) 80%, transparent 100%);
-          mask-image: linear-gradient(180deg, black 0%, black 50%, rgba(0,0,0,.6) 80%, transparent 100%);
+  background-repeat: no-repeat;
+  z-index: 1;
 }
-/* Overlay aggiuntivo per accentuare la sfumatura sul colore del bg specifico per fascia */
-.kt-hero-img::after{
-  content: "";
-  position: absolute; inset: auto 0 0 0; height: 50%;
+.hero-overlay-top{
+  position: absolute; top: 0; left: 0; right: 0;
+  height: 38%;
+  background: linear-gradient(to bottom,
+    rgba(239,230,213,1) 0%,
+    rgba(239,230,213,0.92) 25%,
+    rgba(239,230,213,0.55) 55%,
+    rgba(239,230,213,0) 100%);
+  z-index: 2;
   pointer-events: none;
-  background: linear-gradient(180deg,
-    transparent 0%,
-    rgba(239,230,213,.35) 50%,
-    rgba(239,230,213,.95) 100%);
 }
-.kiosk-splash.kiosk-dp-mattina .kt-hero-img::after{
-  background: linear-gradient(180deg, transparent 0%, rgba(239,230,213,.35) 50%, rgba(239,230,213,.95) 100%);
+.hero-overlay-bottom{
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 42%;
+  background: linear-gradient(to top,
+    rgba(239,230,213,1) 0%,
+    rgba(239,230,213,0.92) 25%,
+    rgba(239,230,213,0.55) 55%,
+    rgba(239,230,213,0) 100%);
+  z-index: 2;
+  pointer-events: none;
 }
-.kiosk-splash.kiosk-dp-pranzo .kt-hero-img::after{
-  background: linear-gradient(180deg, transparent 0%, rgba(232,221,197,.35) 50%, rgba(232,221,197,.95) 100%);
+/* Variant pranzo (champagne più "sandy") */
+.kiosk-splash.kiosk-dp-pranzo .hero-overlay-top{
+  background: linear-gradient(to bottom,
+    rgba(232,221,197,1) 0%,
+    rgba(232,221,197,0.92) 25%,
+    rgba(232,221,197,0.55) 55%,
+    rgba(232,221,197,0) 100%);
 }
-.kiosk-splash.kiosk-dp-aperitivo .kt-hero-img::after{
-  background: linear-gradient(180deg, transparent 0%, rgba(15,12,9,.5) 50%, rgba(15,12,9,.98) 100%);
+.kiosk-splash.kiosk-dp-pranzo .hero-overlay-bottom{
+  background: linear-gradient(to top,
+    rgba(232,221,197,1) 0%,
+    rgba(232,221,197,0.92) 25%,
+    rgba(232,221,197,0.55) 55%,
+    rgba(232,221,197,0) 100%);
 }
-@media (max-width: 720px){ .kt-hero-img{ height: 420px; border-radius: 0; } }
-@media (max-width: 480px){ .kt-hero-img{ height: 320px; border-radius: 0; } }
+/* Variant aperitivo (notte cinematica) */
+.kiosk-splash.kiosk-dp-aperitivo .hero-overlay-top{
+  background: linear-gradient(to bottom,
+    rgba(15,12,9,0.95) 0%,
+    rgba(15,12,9,0.85) 25%,
+    rgba(15,12,9,0.45) 55%,
+    rgba(15,12,9,0) 100%);
+}
+.kiosk-splash.kiosk-dp-aperitivo .hero-overlay-bottom{
+  background: linear-gradient(to top,
+    rgba(15,12,9,0.98) 0%,
+    rgba(15,12,9,0.85) 25%,
+    rgba(15,12,9,0.45) 55%,
+    rgba(15,12,9,0) 100%);
+}
+
+/* Spacer interno al totem per "lasciar respirare" la foto in mezzo
+   (lo spazio dove la foto è chiaramente visibile) */
+.kt-hero-spacer{
+  width: 100%;
+  height: clamp(280px, 38vh, 460px);
+}
 
 /* Hero text · SOPRA la foto come nel mockup target. \n diventa a-capo (pre-line) */
 .kiosk-totem .kiosk-hero-title{

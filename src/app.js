@@ -1706,9 +1706,13 @@ function kioskRender(){
 
     body =
       '<div class="kiosk-splash kiosk-dp-' + dp + '" data-action="kioskStart">' +
+        // Foto FULLSCREEN dietro l'interfaccia + 2 overlay top/bottom per leggibilità
+        '<div class="hero-image-bg" style="background-image:url(\'' + heroImg + '\')"></div>' +
+        '<div class="hero-overlay-top"></div>' +
+        '<div class="hero-overlay-bottom"></div>' +
         exitTrigger +
         chip +
-        // Layout target mockup: testo SOPRA, foto SOTTO, poi CTA + cards + footer
+        // Totem content sopra agli overlay (z-index)
         '<div class="kiosk-totem">' +
           // Riga header: logo+tagline (sinistra) · lang dropdown (destra)
           '<div class="kt-topbar">' +
@@ -1718,10 +1722,10 @@ function kioskRender(){
             '</div>' +
             langSwitch +
           '</div>' +
-          // Hero text PRIMA (sopra alla foto), titolo su 2 righe
+          // Hero text (sopra a tutto, leggibile grazie all'overlay-top)
           '<h1 class="kiosk-hero-title">' + escapeHtml(lang === "en" ? hero.titleEn : hero.titleIt) + '</h1>' +
-          // Hero image grande (food close-up, full-bleed)
-          '<div class="kt-hero-img" style="background-image:url(\'' + heroImg + '\')"></div>' +
+          // Spacer per "lasciar respirare" la foto in mezzo (la foto si vede dietro)
+          '<div class="kt-hero-spacer" aria-hidden="true"></div>' +
           // CTA primario gradient
           '<button class="cta">' + escapeHtml(kioskT("splash.cta")) + ' →</button>' +
           // Featured cards
