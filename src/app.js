@@ -1579,6 +1579,28 @@ function kioskSetLang(lang){
   kioskRender();
 }
 
+// Dropdown lingua (stile mockup "Italiano ⌄")
+function kioskToggleLangMenu(e){
+  if (e) e.stopPropagation();
+  const m = document.getElementById("kioskLangMenu");
+  if (!m) return;
+  m.classList.toggle("hidden");
+  // Click fuori dal menu lo chiude
+  if (!m.classList.contains("hidden")){
+    setTimeout(() => {
+      document.addEventListener("click", kioskCloseLangMenuOnce, { once: true });
+    }, 0);
+  }
+}
+function kioskCloseLangMenuOnce(){
+  const m = document.getElementById("kioskLangMenu");
+  if (m) m.classList.add("hidden");
+}
+function kioskCloseLangMenu(){
+  const m = document.getElementById("kioskLangMenu");
+  if (m) m.classList.add("hidden");
+}
+
 async function renderKioskPage(main){
   document.getElementById("appRoot").innerHTML = '<div class="kiosk-root" id="kioskRoot"></div>';
 
@@ -1668,31 +1690,43 @@ function kioskRender(){
       '</button>'
     )).join("");
 
+    // Lang dropdown unico (stile mockup "Italiano ⌄") — toggle apre lista
+    const otherLang = cur === "it" ? "en" : "it";
+    const langLabel = cur === "it" ? "🇮🇹 Italiano" : "🇬🇧 English";
+    const langSwitch =
+      '<div class="kt-lang">' +
+        '<button class="lang-pill" onclick="event.stopPropagation(); kioskToggleLangMenu(event)">' +
+          escapeHtml(langLabel) + ' <span class="caret">⌄</span>' +
+        '</button>' +
+        '<div class="lang-menu hidden" id="kioskLangMenu">' +
+          '<button onclick="event.stopPropagation(); kioskSetLang(\'it\'); kioskCloseLangMenu()">🇮🇹 Italiano</button>' +
+          '<button onclick="event.stopPropagation(); kioskSetLang(\'en\'); kioskCloseLangMenu()">🇬🇧 English</button>' +
+        '</div>' +
+      '</div>';
+
     body =
       '<div class="kiosk-splash kiosk-dp-' + dp + '" data-action="kioskStart">' +
         exitTrigger +
         chip +
-        '<div class="lang">' +
-          '<button class="' + (cur === "it" ? "active" : "") + '" onclick="event.stopPropagation(); kioskSetLang(\'it\')">🇮🇹 IT</button>' +
-          '<button class="' + (cur === "en" ? "active" : "") + '" onclick="event.stopPropagation(); kioskSetLang(\'en\')">🇬🇧 EN</button>' +
-        '</div>' +
-        // Card centrale stretta (stile totem verticale)
+        // Layout target mockup: testo SOPRA, foto SOTTO, poi CTA + cards + footer
         '<div class="kiosk-totem">' +
-          // Header: logo + tagline (sinistra)
-          '<div class="kt-head">' +
-            '<div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
-            '<div class="tagline-small">' + escapeHtml(kioskT("splash.tagline")) + '.</div>' +
+          // Riga header: logo+tagline (sinistra) · lang dropdown (destra)
+          '<div class="kt-topbar">' +
+            '<div class="kt-head">' +
+              '<div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
+              '<div class="tagline-small">' + escapeHtml(kioskT("splash.tagline")) + '.</div>' +
+            '</div>' +
+            langSwitch +
           '</div>' +
-          // Hero image grande (food close-up)
-          '<div class="kt-hero-img" style="background-image:url(\'' + heroImg + '\')"></div>' +
-          // Hero text + tagline per fascia
+          // Hero text PRIMA (sopra alla foto), titolo su 2 righe
           '<h1 class="kiosk-hero-title">' + escapeHtml(lang === "en" ? hero.titleEn : hero.titleIt) + '</h1>' +
-          '<div class="kiosk-hero-sub">' + escapeHtml(lang === "en" ? hero.subEn : hero.subIt) + '</div>' +
-          // CTA primario
+          // Hero image grande (food close-up, full-bleed)
+          '<div class="kt-hero-img" style="background-image:url(\'' + heroImg + '\')"></div>' +
+          // CTA primario gradient
           '<button class="cta">' + escapeHtml(kioskT("splash.cta")) + ' →</button>' +
           // Featured cards
           '<div class="kt-featured">' + featuredHtml + '</div>' +
-          // Footer
+          // Footer separato
           '<div class="kt-footer">' +
             '<span>Ordina qui · Ritira al banco</span>' +
             '<span class="kt-acc">♿ Accessibilità</span>' +

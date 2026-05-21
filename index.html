@@ -786,24 +786,15 @@ main#appContent{
   overflow-y: auto;
   transition: background 1.2s ease, color 1.2s ease;
 }
-/* Variant per fascia: mattina/pranzo (chiari) e aperitivo (scuro cinematico) */
+/* Variant per fascia · "soft luxury" pulito, no gradient pesanti */
 .kiosk-splash.kiosk-dp-mattina{
-  background:
-    radial-gradient(circle at 20% 25%, rgba(255,236,164,.55) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(16,185,129,.16) 0%, transparent 50%),
-    linear-gradient(180deg, #FFFBF0 0%, var(--champagne) 100%);
+  background: linear-gradient(180deg, #FAF4E3 0%, #EFE6D5 100%);
 }
 .kiosk-splash.kiosk-dp-pranzo{
-  background:
-    radial-gradient(circle at 75% 20%, rgba(16,185,129,.20) 0%, transparent 50%),
-    radial-gradient(circle at 25% 80%, rgba(30,58,138,.14) 0%, transparent 50%),
-    linear-gradient(180deg, var(--bg-soft) 0%, var(--champagne) 100%);
+  background: linear-gradient(180deg, #F4EFE0 0%, #E8DDC5 100%);
 }
 .kiosk-splash.kiosk-dp-aperitivo{
-  background:
-    radial-gradient(circle at 30% 30%, rgba(30,58,138,.45) 0%, transparent 55%),
-    radial-gradient(circle at 70% 70%, rgba(16,185,129,.18) 0%, transparent 50%),
-    linear-gradient(180deg, #1B1B23 0%, #0F0F15 100%);
+  background: linear-gradient(180deg, #1F1B16 0%, #0F0C09 100%);
   color: var(--champagne);
 }
 .kiosk-splash.kiosk-dp-aperitivo .brio-logo .rio{ color: var(--champagne); }
@@ -915,20 +906,74 @@ main#appContent{
 .kiosk-splash.kiosk-dp-aperitivo .lang button.active{ background: var(--champagne); color: var(--onyx); border-color: var(--champagne); }
 
 /* ============================================================
-   KIOSK TOTEM (splash v3 con hero image + featured cards)
+   KIOSK TOTEM SPLASH v4 — premium soft-luxury (mockup adattivo target)
+   Struttura: topbar (logo|lang) → titolo → foto → CTA → cards → footer
    ============================================================ */
 .kiosk-totem{
-  width: 100%; max-width: 680px;
+  width: 100%; max-width: 700px;
   display: flex; flex-direction: column; align-items: stretch;
   text-align: left;
-  padding-top: 8px;
+  padding-top: 0;
 }
-.kt-head{
-  display: flex; flex-direction: column; align-items: flex-start;
-  margin-bottom: 14px;
+
+/* Topbar: logo a sinistra, lang dropdown a destra */
+.kt-topbar{
+  display: flex; justify-content: space-between; align-items: flex-start;
+  margin-bottom: 22px;
 }
+.kt-head{ display: flex; flex-direction: column; align-items: flex-start; }
 .kt-head .brio-logo{ font-size: 48px; margin: 0; line-height: 1; }
 .kt-head .tagline-small{ font-style: italic; color: var(--text-muted); font-size: 12px; margin-top: 4px; letter-spacing: .01em; }
+
+/* Lang dropdown ("Italiano ⌄") */
+.kt-lang{ position: relative; }
+.lang-pill{
+  background: var(--bg-card);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 14px; font-weight: 500;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  box-shadow: var(--sh-1);
+  font-family: inherit;
+  color: var(--text);
+}
+.lang-pill .caret{ font-size: 12px; opacity: .6; }
+.lang-pill:hover{ box-shadow: var(--sh-2); }
+.lang-menu{
+  position: absolute; top: calc(100% + 6px); right: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: var(--sh-3);
+  overflow: hidden;
+  min-width: 160px;
+  z-index: 10;
+}
+.lang-menu.hidden{ display: none; }
+.lang-menu button{
+  display: block; width: 100%; text-align: left;
+  background: transparent; border: 0;
+  padding: 12px 16px;
+  font-size: 14px; cursor: pointer;
+  font-family: inherit;
+}
+.lang-menu button:hover{ background: var(--bg-soft); }
+
+/* Variant aperitivo: dropdown in tema scuro */
+.kiosk-splash.kiosk-dp-aperitivo .lang-pill{
+  background: rgba(255,255,255,.06);
+  border-color: rgba(255,255,255,.12);
+  color: var(--champagne);
+}
+.kiosk-splash.kiosk-dp-aperitivo .lang-menu{
+  background: #2A2A33;
+  border-color: rgba(255,255,255,.15);
+  color: var(--champagne);
+}
+.kiosk-splash.kiosk-dp-aperitivo .lang-menu button{ color: var(--champagne); }
+.kiosk-splash.kiosk-dp-aperitivo .lang-menu button:hover{ background: rgba(255,255,255,.08); }
 
 /* Hero image food · grande, dominante, con sfumatura inferiore verso lo sfondo.
    Altezza adattiva: 38vh con minimo (280) e massimo (440) → entra in viewport
@@ -958,11 +1003,11 @@ main#appContent{
 @media (max-width: 720px){ .kt-hero-img{ height: 360px; border-radius: 22px; } }
 @media (max-width: 480px){ .kt-hero-img{ height: 260px; border-radius: 18px; } }
 
-/* Hero text · white-space: pre-line per rendere \n del JS come a-capo */
+/* Hero text · SOPRA la foto come nel mockup target. \n diventa a-capo (pre-line) */
 .kiosk-totem .kiosk-hero-title{
   font-family: var(--font-display); font-style: italic; font-weight: 800;
-  font-size: 44px; line-height: 1.02; letter-spacing: -.025em;
-  color: var(--onyx); margin: 0 0 8px;
+  font-size: 52px; line-height: 1.02; letter-spacing: -.03em;
+  color: var(--onyx); margin: 0 0 18px;
   text-align: left;
   white-space: pre-line;
 }
@@ -991,30 +1036,33 @@ main#appContent{
   gap: 12px;
   margin-bottom: 18px;
 }
+/* Card featured stile premium beige (mockup target) */
 .kiosk-feat-card{
   background: var(--bg-card);
   border: 1px solid var(--line);
-  border-radius: 18px;
-  padding: 12px 12px 14px;
+  border-radius: 16px;
+  padding: 10px 10px 12px;
   cursor: pointer; user-select: none;
   font-family: inherit;
   transition: transform .12s ease, box-shadow .15s ease;
-  display: flex; flex-direction: column; align-items: stretch; gap: 10px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 8px;
 }
 .kiosk-feat-card:hover{ transform: translateY(-2px); box-shadow: var(--sh-2); }
 .kiosk-feat-card:active{ transform: scale(.97); }
 .ff-photo{
   width: 100%; aspect-ratio: 1 / 1;
-  border-radius: 12px;
+  border-radius: 10px;
   background-size: cover; background-position: center;
   background-color: var(--bg-soft);
 }
 .ff-label{ font-size: 13px; font-weight: 600; color: var(--text); text-align: center; line-height: 1.2; }
 
-/* Footer minimale */
+/* Footer separato con border-top per "respiro" come nel mockup target */
 .kt-footer{
   display: flex; justify-content: space-between; align-items: center;
-  margin-top: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
   font-size: 12px; color: var(--text-muted);
 }
 .kt-acc{ display: inline-flex; align-items: center; gap: 4px; }
