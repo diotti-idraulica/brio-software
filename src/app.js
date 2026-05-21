@@ -1304,33 +1304,86 @@ const KIOSK_QUICK_BUTTONS = [
 ];
 
 // Hero image grande (sopra al CTA) e featured cards (sotto al CTA) per fascia.
-// Foto reali in /brand/food/ (vedi moodboard foto.png originale).
+// Foto reali HD in /brand/prodotti/ (sincronizzate da prodotti/ via tools/sync_prodotti.py).
+// Fallback /brand/food/ per le foto generiche del moodboard.
 const KIOSK_HERO_IMAGE = {
-  mattina:   "/brand/food/brioche-caffe-clean.jpg",
-  pranzo:    "/brand/food/piadina-classica-clean.jpg",
-  aperitivo: "/brand/food/tagliere-salumi-formaggi-clean.jpg",
+  mattina:   "/brand/prodotti/cappuccino-brioche-cioccolato.jpg",
+  pranzo:    "/brand/prodotti/piadina-coppa-piacentina-rucola-e-squacquerone.jpg",
+  aperitivo: "/brand/prodotti/tagliere-coppa-piacentina-salame-piacentino-pancetta-piacentina.jpg",
 };
 
 // Card "featured" sotto al CTA: 3-4 per fascia, ciascuna con foto + label + categoria slug
 const KIOSK_FEATURED = {
   mattina: [
-    { labelIt: "Caffè fumante",     labelEn: "Hot coffee",       img: "/brand/food/caffe-clean.jpg",            cat: "caffetteria" },
-    { labelIt: "Brioche fresche",   labelEn: "Fresh croissants", img: "/brand/food/brioche-clean.jpg",          cat: "caffetteria" },
-    { labelIt: "Spremute naturali", labelEn: "Fresh juices",     img: "/brand/food/spremuta-arancia-clean.jpg", cat: "caffetteria" },
+    { labelIt: "Caffè fumante",   labelEn: "Hot coffee",       img: "/brand/prodotti/caffe.jpg",             cat: "caffetteria" },
+    { labelIt: "Brioche fresche", labelEn: "Fresh croissants", img: "/brand/prodotti/brioche-crema.jpg",     cat: "caffetteria" },
+    { labelIt: "Cappuccino",      labelEn: "Cappuccino",       img: "/brand/prodotti/caffe-con-schiuma.jpg", cat: "caffetteria" },
   ],
   pranzo: [
-    { labelIt: "Piadine",     labelEn: "Piadine",     img: "/brand/food/piadina-speciale-clean.jpg", cat: "pranzo" },
-    { labelIt: "Tramezzini",  labelEn: "Sandwiches",  img: "/brand/food/tramezzino-clean.jpg",       cat: "pranzo" },
-    { labelIt: "Insalatone",  labelEn: "Salad bowls", img: "/brand/food/insalatona-clean.jpg",       cat: "pranzo" },
-    { labelIt: "Bibite",      labelEn: "Drinks",      img: "/brand/food/spremuta-arancia-clean.jpg", cat: "bevande" },
+    { labelIt: "Piadine",    labelEn: "Piadine",     img: "/brand/prodotti/piadina-crudo-rucola-e-squacquerone.jpg",                            cat: "pranzo" },
+    { labelIt: "Tramezzini", labelEn: "Sandwiches",  img: "/brand/prodotti/tramezzino-cotto-mozzarella-pomodoro-maionese.jpg",                  cat: "pranzo" },
+    { labelIt: "Insalatone", labelEn: "Salad bowls", img: "/brand/prodotti/insalatona-instalata-verde-radicchio-mozzarella-tonno-pomodoro.jpg", cat: "pranzo" },
+    { labelIt: "Bibite",     labelEn: "Drinks",      img: "/brand/prodotti/acqua-naturale.jpg",                                                 cat: "bevande" },
   ],
   aperitivo: [
-    { labelIt: "Birre",     labelEn: "Beers",      img: "/brand/food/birra-menabrea-clean.jpg",       cat: "aperitivo" },
-    { labelIt: "Vini",      labelEn: "Wines",      img: "/brand/food/calice-prosecco-clean.jpg",      cat: "aperitivo" },
-    { labelIt: "Taglieri",  labelEn: "Platters",   img: "/brand/food/tagliere-mini-condiviso-clean.jpg", cat: "aperitivo" },
-    { labelIt: "Aperitivi", labelEn: "Aperitifs",  img: "/brand/food/stuzzichini-aperitivo-clean.jpg",   cat: "aperitivo" },
+    { labelIt: "Birre",     labelEn: "Beers",     img: "/brand/food/birra-menabrea-clean.jpg",        cat: "aperitivo" },
+    { labelIt: "Vini",      labelEn: "Wines",     img: "/brand/food/calice-prosecco-clean.jpg",       cat: "aperitivo" },
+    { labelIt: "Taglieri",  labelEn: "Platters",  img: "/brand/prodotti/tagliere-mini.jpg",           cat: "aperitivo" },
+    { labelIt: "Aperitivi", labelEn: "Aperitifs", img: "/brand/food/stuzzichini-aperitivo-clean.jpg", cat: "aperitivo" },
   ],
 };
+
+// Manifest delle foto prodotti disponibili (caricato al boot). Mappa slug → url.
+// Usato per match automatico foto-prodotto quando product.image_url è null.
+let PRODOTTI_IMG_MAP = null;
+
+async function loadProdottiManifest(){
+  if (PRODOTTI_IMG_MAP !== null) return;
+  try {
+    const r = await fetch("/brand/prodotti/manifest.json");
+    if (!r.ok){ PRODOTTI_IMG_MAP = {}; return; }
+    const arr = await r.json();
+    PRODOTTI_IMG_MAP = {};
+    arr.forEach((e) => { if (e.slug && e.url) PRODOTTI_IMG_MAP[e.slug] = e.url; });
+    log("[brand] manifest prodotti:", Object.keys(PRODOTTI_IMG_MAP).length, "foto disponibili");
+  } catch(e){
+    err("[brand] manifest load fallito", e);
+    PRODOTTI_IMG_MAP = {};
+  }
+}
+
+// Slugify analogo a tools/sync_prodotti.py (lowercase, accenti rimossi, non-alphanum → dash)
+function slugifyJs(s){
+  return String(s || "")
+    .normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+// Ritorna URL foto prodotto: priorità a product.image_url, poi match per slug del nome.
+// Usato dai tile del menu kiosk e dalle altre viste prodotto.
+function productImageUrl(p){
+  if (!p) return null;
+  if (p.image_url) return p.image_url;
+  if (!PRODOTTI_IMG_MAP) return null;
+  const slug = slugifyJs(p.name);
+  if (!slug) return null;
+  if (PRODOTTI_IMG_MAP[slug]) return PRODOTTI_IMG_MAP[slug];
+  const keys = Object.keys(PRODOTTI_IMG_MAP);
+  // Match: slug del prodotto è prefisso di una foto disponibile
+  // (es. prodotto "Caffè marocchino" → cerca foto che inizia con "caffe-marocchino")
+  let m = keys.find((k) => k === slug || k.startsWith(slug + "-"));
+  if (m) return PRODOTTI_IMG_MAP[m];
+  // Match parziale per prima parola significativa
+  const firstWord = slug.split("-")[0];
+  if (firstWord && firstWord.length >= 4){
+    m = keys.find((k) => k === firstWord || k.startsWith(firstWord + "-"));
+    if (m) return PRODOTTI_IMG_MAP[m];
+  }
+  return null;
+}
 
 // Restituisce la fascia corrente in base all'ora locale ("mattina"|"pranzo"|"aperitivo")
 function kioskDaypart(){
@@ -1445,7 +1498,8 @@ function kioskSetLang(lang){
 async function renderKioskPage(main){
   document.getElementById("appRoot").innerHTML = '<div class="kiosk-root" id="kioskRoot"></div>';
 
-  await kioskLoadData();
+  // Carica manifest foto + dati menu in parallelo
+  await Promise.all([kioskLoadData(), loadProdottiManifest()]);
   // Carrello da sessionStorage (sopravvive a tab switch / reload)
   try {
     const saved = sessionStorage.getItem(KIOSK_SS_KEY);
@@ -1596,8 +1650,10 @@ function kioskRenderMenu(){
     const maxQty = productMaxQty(p);
     const addable = productMaxAddable(p, KIOSK.cart);
     const avail = addable > 0;
-    const photo = p.image_url
-      ? '<div class="photo-area" style="background-image:url(\'' + escapeHtml(p.image_url) + '\');background-size:cover;background-position:center"></div>'
+    // Foto: image_url DB → match slug nome in /brand/prodotti/ → emoji fallback
+    const imgUrl = productImageUrl(p);
+    const photo = imgUrl
+      ? '<div class="photo-area" style="background-image:url(\'' + escapeHtml(imgUrl) + '\');background-size:cover;background-position:center"></div>'
       : '<div class="photo-area">' + kioskProductEmoji(p) + '</div>';
     let stockBadge = "";
     if (maxQty <= 0) stockBadge = '<div class="kiosk-stock-badge out">Esaurito</div>';
@@ -1821,13 +1877,19 @@ function kioskRenderCrossSell(){
     '<div class="xsell">' +
       '<h4>' + escapeHtml(kioskT("menu.cart_suggest")) + '</h4>' +
       '<div class="xsell-grid">' +
-        suggestions.slice(0, 6).map((p) => (
+        suggestions.slice(0, 6).map((p) => {
+          const xImg = productImageUrl(p);
+          const xMedia = xImg
+            ? '<div class="ico" style="background-image:url(\'' + escapeHtml(xImg) + '\');background-size:cover;background-position:center"></div>'
+            : '<div class="ico">' + kioskProductEmoji(p) + '</div>';
+          return (
           '<div class="xsell-item" data-action="kioskOnProductTap" data-args=\'["' + p.id + '"]\'>' +
-            '<div class="ico">' + kioskProductEmoji(p) + '</div>' +
+            xMedia +
             '<div class="nm">' + escapeHtml(p.name) + '</div>' +
             '<div class="pr">+ ' + euroFmt(p.price_cents) + '</div>' +
           '</div>'
-        )).join("") +
+          );
+        }).join("") +
       '</div>' +
     '</div>'
   );
