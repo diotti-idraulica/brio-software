@@ -1273,7 +1273,48 @@ const KIOSK = {
   idleStartMs: 0,
   exitTaps: [],
   recentSuggestion: null,     // ultimo prodotto aggiunto (per evidenziare cross-sell)
+  daypartOverride: null,      // "mattina" | "pranzo" | "aperitivo" se l'utente ha scelto "ordine rapido"
 };
+
+// ============================================================
+// FASCE ORARIE · "vetrina viva del momento" (vedi BRIO_BRAND_GUIDELINES)
+// ============================================================
+// 07:00-10:30 mattina · 10:30-17:30 pranzo · 17:30-chiusura aperitivo
+const KIOSK_DAYPARTS = {
+  mattina:   { from: "07:00", to: "10:30", emoji: "☀️", labelIt: "MATTINA",    labelEn: "MORNING",   slug: "caffetteria" },
+  pranzo:    { from: "10:30", to: "17:30", emoji: "🍽️", labelIt: "POMERIGGIO", labelEn: "AFTERNOON", slug: "pranzo" },
+  aperitivo: { from: "17:30", to: "24:00", emoji: "🌙", labelIt: "SERA",       labelEn: "EVENING",   slug: "aperitivo" },
+};
+
+// Hero copy per fascia (lo stesso pattern usato nel moodboard)
+const KIOSK_HERO = {
+  mattina:   { titleIt: "Buongiorno!",                  subIt: "Inizia la giornata con brio.",
+               titleEn: "Good morning!",                subEn: "Start your day with brio." },
+  pranzo:    { titleIt: "Pranzo veloce. Fatto bene.",   subIt: "Piadine, tramezzini, bibite.",
+               titleEn: "Quick lunch, done right.",    subEn: "Piadine, sandwiches, drinks." },
+  aperitivo: { titleIt: "È il momento dell'aperitivo.", subIt: "Rilassati, sei da Brio.",
+               titleEn: "Aperitivo time.",             subEn: "Relax, you're at Brio." },
+};
+
+// Pulsanti "Ordine rapido" della home (3 + quello della fascia corrente è evidenziato)
+const KIOSK_QUICK_BUTTONS = [
+  { key: "mattina",   icon: "☕", labelIt: "Colazione veloce", labelEn: "Quick breakfast" },
+  { key: "pranzo",    icon: "🥪", labelIt: "Pranzo veloce",    labelEn: "Quick lunch" },
+  { key: "aperitivo", icon: "🍺", labelIt: "Aperitivo veloce", labelEn: "Quick aperitivo" },
+];
+
+// Restituisce la fascia corrente in base all'ora locale ("mattina"|"pranzo"|"aperitivo")
+function kioskDaypart(){
+  const d = new Date();
+  const minutes = d.getHours() * 60 + d.getMinutes();
+  const mattinaEnd = 10 * 60 + 30; // 10:30
+  const pranzoEnd  = 17 * 60 + 30; // 17:30
+  const mattinaStart = 7 * 60;     // 07:00
+  if (minutes >= mattinaStart && minutes < mattinaEnd) return "mattina";
+  if (minutes >= mattinaEnd && minutes < pranzoEnd) return "pranzo";
+  // Dopo le 17:30 e fino alla mezzanotte: aperitivo. Anche notte fonda lo trattiamo come aperitivo (locale chiuso).
+  return "aperitivo";
+}
 const KIOSK_SS_KEY = "brio.kiosk.cart";
 const KIOSK_LANG_KEY = "brio.kiosk.lang";
 
@@ -1441,18 +1482,38 @@ function kioskRender(){
 
   if (KIOSK.step === "splash"){
     const cur = kioskLang();
+    const dp = kioskDaypart();
+    const dpCfg = KIOSK_DAYPARTS[dp];
+    const hero = KIOSK_HERO[dp];
+    const lang = cur;
+    // Chip orario: "☀️ MATTINA · 07:00-10:30"
+    const chip = '<div class="kiosk-dp-chip"><span class="emoji">' + dpCfg.emoji + '</span><div><div class="dp-label">' + (lang === "en" ? dpCfg.labelEn : dpCfg.labelIt) + '</div><div class="dp-time">' + dpCfg.from + ' · ' + dpCfg.to + '</div></div></div>';
+    // 3 pulsanti "Ordine rapido"
+    const quickBtns = KIOSK_QUICK_BUTTONS.map((q) => {
+      const isActive = q.key === dp;
+      return '<button class="quick-btn ' + (isActive ? "active" : "") + '"' +
+        ' onclick="event.stopPropagation(); kioskQuickStart(\'' + q.key + '\')">' +
+          '<span class="qb-icon">' + q.icon + '</span>' +
+          '<span class="qb-label">' + escapeHtml(lang === "en" ? q.labelEn : q.labelIt) + '</span>' +
+      '</button>';
+    }).join("");
+
     body =
-      '<div class="kiosk-splash" data-action="kioskStart">' +
+      '<div class="kiosk-splash kiosk-dp-' + dp + '" data-action="kioskStart">' +
         exitTrigger +
+        chip +
         '<div class="lang">' +
-          // Stop propagation per il tap sui bottoni lingua: non vogliamo che entrino al menu
           '<button class="' + (cur === "it" ? "active" : "") + '" onclick="event.stopPropagation(); kioskSetLang(\'it\')">🇮🇹 IT</button>' +
           '<button class="' + (cur === "en" ? "active" : "") + '" onclick="event.stopPropagation(); kioskSetLang(\'en\')">🇬🇧 EN</button>' +
         '</div>' +
-        '<div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
-        '<div class="welcome">' + escapeHtml(kioskT("splash.welcome")) + ' <span class="accent">' + escapeHtml(kioskT("splash.welcome_accent")) + '</span></div>' +
-        '<div class="tagline-big">' + escapeHtml(kioskT("splash.tagline")) + '</div>' +
-        '<button class="cta">' + escapeHtml(kioskT("splash.cta")) + '</button>' +
+        '<div class="kiosk-hero-card">' +
+          '<div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
+          '<div class="tagline-small">' + escapeHtml(kioskT("splash.tagline")) + '.</div>' +
+          '<h1 class="kiosk-hero-title">' + escapeHtml(lang === "en" ? hero.titleEn : hero.titleIt) + '</h1>' +
+          '<div class="kiosk-hero-sub">' + escapeHtml(lang === "en" ? hero.subEn : hero.subIt) + '</div>' +
+          '<button class="cta">' + escapeHtml(kioskT("splash.cta")) + ' →</button>' +
+        '</div>' +
+        '<div class="kiosk-quick-row">' + quickBtns + '</div>' +
         '<div class="footnote">' + escapeHtml(kioskT("splash.footnote")) + '</div>' +
       '</div>';
   } else if (KIOSK.step === "menu" || KIOSK.step === "personalize"){
@@ -1813,7 +1874,30 @@ function kioskCartTotals(){
 }
 
 // =========== Azioni ==========
-function kioskStart(){ kioskGoto("menu"); }
+function kioskStart(){
+  // All'apertura del menu, seleziona di default la categoria della fascia corrente
+  kioskPickDaypartCategory(KIOSK.daypartOverride || kioskDaypart());
+  kioskGoto("menu");
+}
+
+// "Ordine rapido" dai 3 pulsanti della splash: entra al menu con la categoria
+// della fascia richiesta (non dipende dall'orario corrente).
+function kioskQuickStart(daypartKey){
+  KIOSK.daypartOverride = daypartKey;
+  kioskPickDaypartCategory(daypartKey);
+  kioskGoto("menu");
+}
+
+// Sceglie activeCatId dalla categoria che corrisponde alla fascia, se esiste.
+// Usa lo slug del KIOSK_DAYPARTS. Fallback: prima categoria visibile.
+function kioskPickDaypartCategory(daypartKey){
+  if (!KIOSK.categories || KIOSK.categories.length === 0) return;
+  const wantedSlug = (KIOSK_DAYPARTS[daypartKey] || {}).slug;
+  let cat = null;
+  if (wantedSlug) cat = KIOSK.categories.find((c) => c.slug === wantedSlug);
+  if (!cat) cat = KIOSK.categories[0];
+  if (cat) KIOSK.activeCatId = cat.id;
+}
 
 async function kioskReset(){
   if (KIOSK.cart.length > 0){
@@ -1830,6 +1914,7 @@ async function kioskReset(){
   KIOSK.cart = [];
   KIOSK.lastOrder = null;
   KIOSK.recentSuggestion = null;
+  KIOSK.daypartOverride = null;
   sessionStorage.removeItem(KIOSK_SS_KEY);
   kioskGoto("splash");
 }
@@ -2127,15 +2212,18 @@ function kioskStartSuccessCountdown(){
 // Se il documento è hidden (cliente passa ad altro / app in background), il timer è messo in pausa.
 function kioskBumpIdle(){
   clearTimeout(KIOSK.idleTimer);
-  if (document.hidden) return;          // pausa quando tab non attiva
-  if (KIOSK.step !== "menu") return;
-  if (KIOSK.cart.length === 0) return;
+  if (document.hidden) return;                          // pausa quando tab non attiva
+  if (KIOSK.step !== "menu" && KIOSK.step !== "personalize") return;
+  // Idle più aggressivo se carrello vuoto (cliente non sta ordinando) → 30s
+  // Idle più tollerante se carrello pieno (cliente sta scegliendo) → 90s
+  const idleMs = KIOSK.cart.length === 0 ? 30000 : 90000;
   KIOSK.idleTimer = setTimeout(() => {
-    log("[kiosk] auto-reset per inattività (90s)");
+    log("[kiosk] auto-reset per inattività (" + (idleMs/1000) + "s)");
     KIOSK.cart = [];
+    KIOSK.daypartOverride = null;
     sessionStorage.removeItem(KIOSK_SS_KEY);
     kioskGoto("splash");
-  }, 90000);
+  }, idleMs);
 }
 
 function kioskOnVisibility(){

@@ -6,23 +6,16 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0A0907",
+  "background_color": "#EFE6D5",
   "theme_color": "#10B981",
   "lang": "it",
   "dir": "ltr",
   "categories": ["business", "food", "productivity"],
   "icons": [
-    {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
-    }
+    { "src": "/brand/brio-icon-b.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/brand/brio-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/brio-icon-256.png", "sizes": "256x256", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/brio-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/brio-icon-b-bg.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
   ]
 }

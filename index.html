@@ -14,9 +14,21 @@
 <meta name="apple-mobile-web-app-title" content="Brio" />
 <meta name="mobile-web-app-capable" content="yes" />
 
-<!-- Icons -->
-<link rel="icon" type="image/svg+xml" href="/icon.svg" />
-<link rel="apple-touch-icon" href="/icon.svg" />
+<!-- Icons (brand pack ufficiale, vedi BRIO_BRAND_GUIDELINES.md §6.1) -->
+<link rel="icon" type="image/x-icon" href="/brand/favicon.ico" />
+<link rel="icon" type="image/svg+xml" href="/brand/brio-icon-b.svg" />
+<link rel="icon" type="image/png" sizes="32x32" href="/brand/brio-icon-32.png" />
+<link rel="icon" type="image/png" sizes="16x16" href="/brand/brio-icon-16.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="/brand/brio-icon-180.png" />
+
+<!-- Open Graph -->
+<meta property="og:title" content="Brio · Fast Bar a Piacenza" />
+<meta property="og:description" content="Dal caffè al calice." />
+<meta property="og:image" content="/brand/brio-og-image.png" />
+<meta property="og:type" content="website" />
+<meta property="og:locale" content="it_IT" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:image" content="/brand/brio-og-image.png" />
 
 <!-- Preload app.js (servito minificato dalla root) -->
 <link rel="preload" as="script" href="/app.js" />
@@ -761,44 +773,142 @@ main#appContent{
   cursor: pointer;
 }
 
-/* SPLASH iniziale v2 — più brandizzato, claim "Sii Brio · Ordina qui" */
+/* ============================================================
+   SPLASH KIOSK · "vetrina viva del momento" (3 fasce orarie)
+   ============================================================ */
 .kiosk-splash{
   flex:1; display:flex; flex-direction: column; align-items:center; justify-content:center;
-  text-align:center; padding: 40px; position: relative;
-  background:
-    radial-gradient(circle at 25% 25%, rgba(16,185,129,.18) 0%, transparent 45%),
-    radial-gradient(circle at 75% 80%, rgba(30,58,138,.16) 0%, transparent 45%),
-    linear-gradient(180deg, var(--champagne) 0%, var(--bg-soft) 100%);
+  text-align:center; padding: 56px 40px 28px; position: relative;
   cursor: pointer;
+  transition: background 1.2s ease, color 1.2s ease;
 }
-.kiosk-splash .brio-logo{ font-size: 96px; margin-bottom: 4px; }
-.kiosk-splash .welcome{ font-size: 56px; font-style: italic; font-weight: 700; color: var(--onyx); letter-spacing: -.02em; line-height: 1.05; margin: 12px 0 4px; }
-.kiosk-splash .welcome .accent{ background: var(--grad-brio); -webkit-background-clip: text; background-clip: text; color: transparent; }
-.kiosk-splash .tagline-big{ font-style: italic; color: var(--text-muted); font-size: 20px; margin-bottom: 50px; }
+/* Variant per fascia: mattina/pranzo (chiari) e aperitivo (scuro cinematico) */
+.kiosk-splash.kiosk-dp-mattina{
+  background:
+    radial-gradient(circle at 20% 25%, rgba(255,236,164,.55) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(16,185,129,.16) 0%, transparent 50%),
+    linear-gradient(180deg, #FFFBF0 0%, var(--champagne) 100%);
+}
+.kiosk-splash.kiosk-dp-pranzo{
+  background:
+    radial-gradient(circle at 75% 20%, rgba(16,185,129,.20) 0%, transparent 50%),
+    radial-gradient(circle at 25% 80%, rgba(30,58,138,.14) 0%, transparent 50%),
+    linear-gradient(180deg, var(--bg-soft) 0%, var(--champagne) 100%);
+}
+.kiosk-splash.kiosk-dp-aperitivo{
+  background:
+    radial-gradient(circle at 30% 30%, rgba(30,58,138,.45) 0%, transparent 55%),
+    radial-gradient(circle at 70% 70%, rgba(16,185,129,.18) 0%, transparent 50%),
+    linear-gradient(180deg, #1B1B23 0%, #0F0F15 100%);
+  color: var(--champagne);
+}
+.kiosk-splash.kiosk-dp-aperitivo .brio-logo .rio{ color: var(--champagne); }
+.kiosk-splash.kiosk-dp-aperitivo .kiosk-hero-title{ color: var(--champagne); }
+.kiosk-splash.kiosk-dp-aperitivo .kiosk-hero-sub,
+.kiosk-splash.kiosk-dp-aperitivo .tagline-small,
+.kiosk-splash.kiosk-dp-aperitivo .footnote{ color: rgba(239,230,213,.6); }
+.kiosk-splash.kiosk-dp-aperitivo .quick-btn{ background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.12); color: var(--champagne); }
+.kiosk-splash.kiosk-dp-aperitivo .quick-btn.active{ background: var(--grad-brio); color: white; border-color: transparent; }
+
+/* Chip orario in cima */
+.kiosk-dp-chip{
+  position: absolute; top: 28px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(255,255,255,.85);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 18px 8px 14px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: var(--sh-1);
+  z-index: 2;
+}
+.kiosk-dp-chip .emoji{ font-size: 22px; line-height: 1; }
+.kiosk-dp-chip .dp-label{ font-size: 12px; font-weight: 800; letter-spacing: .12em; color: var(--onyx); }
+.kiosk-dp-chip .dp-time{ font-size: 10px; color: var(--text-muted); letter-spacing: .04em; }
+.kiosk-splash.kiosk-dp-aperitivo .kiosk-dp-chip{
+  background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.14);
+}
+.kiosk-splash.kiosk-dp-aperitivo .kiosk-dp-chip .dp-label{ color: var(--champagne); }
+.kiosk-splash.kiosk-dp-aperitivo .kiosk-dp-chip .dp-time{ color: rgba(239,230,213,.55); }
+
+/* Card hero centrale */
+.kiosk-hero-card{
+  display: flex; flex-direction: column; align-items: center;
+  max-width: 680px;
+}
+.kiosk-splash .brio-logo{ font-size: 78px; margin-bottom: 0; line-height: 1; }
+.tagline-small{ font-style: italic; color: var(--text-muted); font-size: 14px; margin-top: 2px; letter-spacing: .01em; }
+.kiosk-hero-title{
+  font-family: var(--font-display); font-style: italic; font-weight: 800;
+  font-size: 56px; line-height: 1.05; letter-spacing: -.02em;
+  color: var(--onyx); margin: 28px 0 8px;
+}
+.kiosk-hero-sub{
+  color: var(--text-muted); font-size: 19px; line-height: 1.4;
+  margin-bottom: 28px;
+}
 .kiosk-splash .cta{
-  padding: 24px 64px;
+  padding: 22px 56px;
   background: var(--grad-brio); color: white;
   border-radius: 999px;
-  font-size: 22px; font-weight: 600;
+  font-size: 20px; font-weight: 700; letter-spacing: .01em;
   box-shadow: var(--sh-3);
   border: 0;
-  animation: pulse 2s ease-in-out infinite;
+  animation: pulse 2.2s ease-in-out infinite;
 }
 @keyframes pulse{
   0%, 100%{ transform: scale(1); box-shadow: var(--sh-3); }
-  50%{ transform: scale(1.04); box-shadow: 0 16px 40px rgba(16,185,129,.3); }
+  50%{ transform: scale(1.04); box-shadow: 0 16px 40px rgba(16,185,129,.35); }
 }
-.kiosk-splash .footnote{ position: absolute; bottom: 28px; left: 0; right: 0; color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
+
+/* Riga 3 pulsanti "Ordine rapido" */
+.kiosk-quick-row{
+  display: flex; gap: 14px; margin-top: 36px;
+  flex-wrap: wrap; justify-content: center;
+  max-width: 760px;
+}
+.quick-btn{
+  flex: 1 1 200px; min-width: 180px;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 18px 14px;
+  background: rgba(255,255,255,.7);
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  cursor: pointer; user-select: none;
+  transition: transform .12s ease, box-shadow .18s ease, border-color .18s ease;
+  font-family: inherit;
+}
+.quick-btn:hover{ transform: translateY(-2px); box-shadow: var(--sh-2); }
+.quick-btn:active{ transform: scale(.97); }
+.quick-btn .qb-icon{ font-size: 28px; line-height: 1; }
+.quick-btn .qb-label{ font-size: 13px; font-weight: 600; color: var(--text); }
+.quick-btn.active{
+  background: linear-gradient(180deg, rgba(16,185,129,.14), rgba(16,185,129,.04));
+  border-color: var(--emerald);
+  position: relative;
+}
+.quick-btn.active::after{
+  content: "Adesso";
+  position: absolute; top: -10px; right: 12px;
+  background: var(--emerald); color: white;
+  padding: 2px 10px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.kiosk-splash .footnote{ margin-top: 24px; color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: .12em; }
 .kiosk-splash .lang{
-  position: absolute; top: 28px; left: 28px;
+  position: absolute; top: 28px; right: 28px;
   display: flex; gap: 8px; z-index: 2;
 }
 .kiosk-splash .lang button{
   background: rgba(255,255,255,.7); border: 1px solid var(--line);
-  border-radius: 999px; padding: 10px 18px; font-size: 14px; font-weight: 500;
+  border-radius: 999px; padding: 8px 14px; font-size: 13px; font-weight: 500;
   cursor: pointer; backdrop-filter: blur(4px); transition: all .15s ease;
 }
 .kiosk-splash .lang button.active{ background: var(--onyx); color: var(--champagne); border-color: var(--onyx); }
+.kiosk-splash.kiosk-dp-aperitivo .lang button{ background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.12); color: var(--champagne); }
+.kiosk-splash.kiosk-dp-aperitivo .lang button.active{ background: var(--champagne); color: var(--onyx); border-color: var(--champagne); }
 
 /* STEP PAGAMENTO (Dove vorresti pagare?) */
 .kiosk-pay{

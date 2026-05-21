@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 500" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <linearGradient id="brioGradient" x1="0" y1="0" x2="400" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+  </defs>
+  <text x="50" y="400"
+        font-family="Helvetica, Arial, sans-serif"
+        font-weight="bold"
+        font-style="italic"
+        font-size="500"
+        fill="url(#brioGradient)">b</text>
+</svg>
