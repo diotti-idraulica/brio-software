@@ -1286,14 +1286,15 @@ const KIOSK_DAYPARTS = {
   aperitivo: { from: "17:30", to: "24:00", emoji: "🌙", labelIt: "SERA",       labelEn: "EVENING",   slug: "aperitivo" },
 };
 
-// Hero copy per fascia (lo stesso pattern usato nel moodboard)
+// Hero copy per fascia. Il \n viene reso come a-capo (CSS white-space: pre-line)
+// → titolo spezzato su 2 righe come nel mockup target.
 const KIOSK_HERO = {
   mattina:   { titleIt: "Buongiorno!",                  subIt: "Inizia la giornata con brio.",
                titleEn: "Good morning!",                subEn: "Start your day with brio." },
-  pranzo:    { titleIt: "Pranzo veloce. Fatto bene.",   subIt: "Piadine, tramezzini, bibite.",
-               titleEn: "Quick lunch, done right.",    subEn: "Piadine, sandwiches, drinks." },
-  aperitivo: { titleIt: "È il momento dell'aperitivo.", subIt: "Rilassati, sei da Brio.",
-               titleEn: "Aperitivo time.",             subEn: "Relax, you're at Brio." },
+  pranzo:    { titleIt: "Pranzo veloce.\nFatto bene.",  subIt: "Piadine, tramezzini, bibite.",
+               titleEn: "Quick lunch.\nDone right.",    subEn: "Piadine, sandwiches, drinks." },
+  aperitivo: { titleIt: "È il momento\ndell'aperitivo.", subIt: "Rilassati, sei da Brio.",
+               titleEn: "Aperitivo time.\nRelax at Brio.", subEn: "Wines, beers, platters." },
 };
 
 // Pulsanti "Ordine rapido" della home (3 + quello della fascia corrente è evidenziato)
@@ -1384,6 +1385,16 @@ const PRODOTTI_ALIAS = {
   // Bevande
   "acqua-naturale":   "acqua-naturale",
   "acqua-frizzante":  "acqua-frizzante",
+  // Sfiziosità
+  "mozzarella-sticks":             "mozzarella-sticks",
+  "jalapenos-cheddar":             "jalapeno-cheddar",
+  "jalapeno-cheddar":              "jalapeno-cheddar",
+  "onion-rings":                   "onion-rings",
+  "patatine-fritte":               "patatine-fritte",
+  "patatine":                      "patatine-fritte",
+  "patatine-cheddar-bacon":        "patatine-fritte-cheddar-bacon",
+  "patatine-cheddar-e-bacon":      "patatine-fritte-cheddar-bacon",
+  "patatine-fritte-cheddar-bacon": "patatine-fritte-cheddar-bacon",
 };
 
 // Manifest delle foto prodotti disponibili (caricato al boot). Mappa slug → url.

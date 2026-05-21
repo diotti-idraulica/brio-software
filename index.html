@@ -939,12 +939,14 @@ main#appContent{
 }
 @media (max-width: 600px){ .kt-hero-img{ height: 240px; border-radius: 18px; } }
 
-/* Hero text */
+/* Hero text · white-space: pre-line per rendere \n del JS come a-capo nel browser
+   (titolo spezzato su 2 righe come nel mockup "kiosk adattivo") */
 .kiosk-totem .kiosk-hero-title{
   font-family: var(--font-display); font-style: italic; font-weight: 800;
-  font-size: 44px; line-height: 1.05; letter-spacing: -.02em;
-  color: var(--onyx); margin: 0 0 8px;
+  font-size: 48px; line-height: 1.02; letter-spacing: -.025em;
+  color: var(--onyx); margin: 0 0 10px;
   text-align: left;
+  white-space: pre-line;
 }
 .kiosk-totem .kiosk-hero-sub{
   color: var(--text-muted); font-size: 17px; line-height: 1.4;
