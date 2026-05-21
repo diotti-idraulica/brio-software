@@ -1014,16 +1014,32 @@ main#appContent{
 .kiosk-success .msg{ font-size: 18px; color: var(--text-muted); max-width: 480px; margin: 0 auto 8px; }
 .kiosk-success .countdown{ margin-top: 24px; color: var(--text-dim); font-size: 13px; }
 
-/* PERSONALIZE modal (kiosk) - bottom sheet con backdrop blur */
-.kpz-back{ position: fixed; inset:0; background: rgba(10,9,7,.45); z-index: 150; display:flex; align-items:flex-end; justify-content:center; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+/* PERSONALIZE modal (kiosk) - dialog centrato con backdrop blur */
+.kpz-back{
+  position: fixed; inset:0;
+  background: rgba(10,9,7,.45);
+  z-index: 150;
+  display:flex; align-items:center; justify-content:center;
+  padding: 24px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
 .kpz-sheet{
   background: var(--bg-card);
-  border-radius: 24px 24px 0 0;
-  width: 100%; max-width: 720px;
+  border-radius: 24px;
+  width: 100%; max-width: 680px;
   max-height: 88vh; overflow: auto;
+  box-shadow: var(--sh-3);
   animation: sheet-in .25s cubic-bezier(.2,.8,.2,1);
 }
-@keyframes sheet-in{ from{ transform: translateY(40px); opacity:0; } to{ transform: translateY(0); opacity:1; } }
+@keyframes sheet-in{
+  from{ transform: translateY(20px) scale(.97); opacity:0; }
+  to  { transform: translateY(0) scale(1); opacity:1; }
+}
+/* Su totem verticale stretto (es. 22" portrait): torna a bottom sheet a tutta larghezza */
+@media (max-aspect-ratio: 3/4) and (max-width: 1080px){
+  .kpz-back{ align-items: flex-end; padding: 0; }
+  .kpz-sheet{ border-radius: 24px 24px 0 0; max-width: 100%; }
+}
 .kpz-head{ padding: 22px 24px 12px; border-bottom: 1px solid var(--line); display:flex; align-items:center; justify-content:space-between; }
 .kpz-head h2{ margin: 0; font-size: 22px; font-style: italic; font-weight: 700; }
 .kpz-head .sub{ color: var(--text-muted); font-size: 13px; margin-top: 2px; }

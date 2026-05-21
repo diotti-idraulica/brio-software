@@ -1857,7 +1857,33 @@ function kioskOnProductTap(productId){
 
 function kioskToggleCustomization(label){
   KIOSK.pendingSelections[label] = !KIOSK.pendingSelections[label];
-  kioskRender();
+  // Aggiornamento incrementale del modal: niente flicker, niente ri-animazione.
+  // Se il modal non c'è (caso anomalo), full render come fallback.
+  const modal = document.getElementById("kpzModal");
+  const p = KIOSK.pendingProduct;
+  if (!modal || !p){ kioskRender(); return; }
+
+  // Aggiorna stato visivo di ogni opzione (classe .selected + check ✓)
+  modal.querySelectorAll(".kpz-opt").forEach((el) => {
+    const args = el.getAttribute("data-args");
+    let lbl = null;
+    try { lbl = JSON.parse(args)[0]; } catch(e){}
+    if (!lbl) return;
+    const sel = !!KIOSK.pendingSelections[lbl];
+    el.classList.toggle("selected", sel);
+    const check = el.querySelector(".check");
+    if (check) check.textContent = sel ? "✓" : "";
+  });
+
+  // Aggiorna il prezzo nel bottone "Aggiungi · € X"
+  const customs = (p.customizations || []);
+  let extra = 0;
+  customs.forEach((c) => {
+    if (KIOSK.pendingSelections[c.label]) extra += Number(c.price_delta_cents || 0);
+  });
+  const finalPrice = Number(p.price_cents) + extra;
+  const addBtn = modal.querySelector(".kpz-foot .add");
+  if (addBtn) addBtn.textContent = kioskT("personalize.add") + " · " + euroFmt(finalPrice);
 }
 
 function kioskCancelPersonalize(){
