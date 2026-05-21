@@ -1738,9 +1738,9 @@ function kioskRenderMenu(){
       '<button class="home-btn" data-action="kioskReset">⟲ ' + escapeHtml(kioskT("menu.new_order")) + '</button>' +
     '</div>' +
     '<div class="kiosk-body">' +
+      '<aside class="kiosk-cats-side">' + cats + '</aside>' +
       '<div class="kiosk-content">' +
         kioskRenderHero() +
-        '<div class="kiosk-cats">' + cats + '</div>' +
         '<div class="kiosk-products">' + products + '</div>' +
       '</div>' +
       kioskRenderCart() +
