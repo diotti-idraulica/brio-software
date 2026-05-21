@@ -914,7 +914,7 @@ main#appContent{
    KIOSK TOTEM (splash v3 con hero image + featured cards)
    ============================================================ */
 .kiosk-totem{
-  width: 100%; max-width: 560px;
+  width: 100%; max-width: 680px;
   display: flex; flex-direction: column; align-items: stretch;
   text-align: left;
   padding-top: 24px;
@@ -926,18 +926,31 @@ main#appContent{
 .kt-head .brio-logo{ font-size: 56px; margin: 0; line-height: 1; }
 .kt-head .tagline-small{ font-style: italic; color: var(--text-muted); font-size: 13px; margin-top: 4px; letter-spacing: .01em; }
 
-/* Hero image food (close-up grande) */
+/* Hero image food · grande, dominante, con sfumatura inferiore verso lo sfondo */
 .kt-hero-img{
+  position: relative;
   width: 100%;
-  height: 320px;
-  border-radius: 24px;
+  height: 460px;
+  border-radius: 28px;
   background-size: cover;
   background-position: center;
   background-color: var(--bg-soft);
-  box-shadow: 0 8px 28px rgba(10,9,7,.12);
+  box-shadow: 0 18px 44px rgba(10,9,7,.20);
   margin-bottom: 22px;
+  overflow: hidden;
 }
-@media (max-width: 600px){ .kt-hero-img{ height: 240px; border-radius: 18px; } }
+/* Gradient sfumato in basso che fonde la foto con lo sfondo splash → continuità visiva */
+.kt-hero-img::after{
+  content: "";
+  position: absolute; inset: auto 0 0 0; height: 36%;
+  background: linear-gradient(180deg, transparent 0%, rgba(255,251,240,.55) 60%, rgba(255,251,240,.85) 100%);
+  pointer-events: none;
+}
+.kiosk-splash.kiosk-dp-aperitivo .kt-hero-img::after{
+  background: linear-gradient(180deg, transparent 0%, rgba(27,27,35,.6) 60%, rgba(15,15,21,.9) 100%);
+}
+@media (max-width: 720px){ .kt-hero-img{ height: 360px; border-radius: 22px; } }
+@media (max-width: 480px){ .kt-hero-img{ height: 260px; border-radius: 18px; } }
 
 /* Hero text · white-space: pre-line per rendere \n del JS come a-capo nel browser
    (titolo spezzato su 2 righe come nel mockup "kiosk adattivo") */

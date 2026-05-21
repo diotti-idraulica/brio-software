@@ -1367,6 +1367,7 @@ const PRODOTTI_ALIAS = {
   "tramezzino":          "tramezzino-cotto-mozzarella-pomodoro-maionese",
   "tramezzino-classico": "tramezzino-cotto-mozzarella-pomodoro-maionese",
   "tramezzino-cotto":    "tramezzino-cotto-mozzarella-pomodoro-maionese",
+  "tramezzino-farcito":  "tramezzino-cotto-mozzarella-pomodoro-maionese",
   // Insalatone
   "insalatona":          "insalatona-instalata-verde-radicchio-mozzarella-tonno-pomodoro",
   "insalata":            "insalatona-instalata-verde-radicchio-mozzarella-tonno-pomodoro",
@@ -1383,8 +1384,11 @@ const PRODOTTI_ALIAS = {
   "prosecco":           "calice-prosecco",
   "calice-prosecco":    "calice-prosecco",
   // Bevande
-  "acqua-naturale":   "acqua-naturale",
-  "acqua-frizzante":  "acqua-frizzante",
+  "acqua":                  "acqua-naturale",
+  "acqua-naturale":         "acqua-naturale",
+  "acqua-naturale-50cl":    "acqua-naturale",
+  "acqua-frizzante":        "acqua-frizzante",
+  "acqua-frizzante-50cl":   "acqua-frizzante",
   // Sfiziosità
   "mozzarella-sticks":             "mozzarella-sticks",
   "jalapenos-cheddar":             "jalapeno-cheddar",
@@ -1446,10 +1450,22 @@ function productImageUrl(p){
   const aliased = PRODOTTI_ALIAS[slug];
   if (aliased && PRODOTTI_IMG_MAP[aliased]) return PRODOTTI_IMG_MAP[aliased];
   // 4. Match estensivo: slug del prodotto è prefisso ESATTO di una foto
-  //    (richiede dash dopo per evitare match troppo larghi)
   const keys = Object.keys(PRODOTTI_IMG_MAP);
   const m = keys.find((k) => k.startsWith(slug + "-"));
   if (m) return PRODOTTI_IMG_MAP[m];
+  // 5. Fallback "stem": rimuovo l'ultima parola del slug e riprovo (max 1 parola).
+  //    Risolve casi tipo "Acqua naturale 50cl" → "acqua-naturale-50cl" → "acqua-naturale" match
+  //    o "Tramezzino farcito" → fallback ad alias "tramezzino".
+  const parts = slug.split("-");
+  if (parts.length > 1){
+    const stem = parts.slice(0, -1).join("-");
+    if (PRODOTTI_IMG_MAP[stem]) return PRODOTTI_IMG_MAP[stem];
+    if (PRODOTTI_ALIAS[stem] && PRODOTTI_IMG_MAP[PRODOTTI_ALIAS[stem]]) {
+      return PRODOTTI_IMG_MAP[PRODOTTI_ALIAS[stem]];
+    }
+    const mStem = keys.find((k) => k.startsWith(stem + "-"));
+    if (mStem) return PRODOTTI_IMG_MAP[mStem];
+  }
   return null;
 }
 
