@@ -1471,6 +1471,13 @@ function productImageUrl(p){
 
 // Restituisce la fascia corrente in base all'ora locale ("mattina"|"pranzo"|"aperitivo")
 function kioskDaypart(){
+  // Override via URL ?dp=mattina|pranzo|aperitivo (per testing/preview)
+  try {
+    const url = new URLSearchParams(location.search);
+    const override = url.get("dp");
+    if (override && KIOSK_DAYPARTS[override]) return override;
+  } catch(e){ /* ignore */ }
+  // Default: in base all'ora locale
   const d = new Date();
   const minutes = d.getHours() * 60 + d.getMinutes();
   const mattinaEnd = 10 * 60 + 30; // 10:30
