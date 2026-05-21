@@ -778,10 +778,9 @@ main#appContent{
    ============================================================ */
 .kiosk-splash{
   flex:1; display:flex; flex-direction: column; align-items:center;
-  /* Allineato in alto per riempire il totem come nel mockup (no center vertical) */
   justify-content: flex-start;
   text-align: center;
-  padding: 84px 28px 28px;
+  padding: 56px 28px 20px;
   position: relative;
   cursor: pointer;
   overflow-y: auto;
@@ -922,26 +921,28 @@ main#appContent{
   width: 100%; max-width: 680px;
   display: flex; flex-direction: column; align-items: stretch;
   text-align: left;
-  padding-top: 24px;
+  padding-top: 8px;
 }
 .kt-head{
   display: flex; flex-direction: column; align-items: flex-start;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
-.kt-head .brio-logo{ font-size: 56px; margin: 0; line-height: 1; }
-.kt-head .tagline-small{ font-style: italic; color: var(--text-muted); font-size: 13px; margin-top: 4px; letter-spacing: .01em; }
+.kt-head .brio-logo{ font-size: 48px; margin: 0; line-height: 1; }
+.kt-head .tagline-small{ font-style: italic; color: var(--text-muted); font-size: 12px; margin-top: 4px; letter-spacing: .01em; }
 
-/* Hero image food · grande, dominante, con sfumatura inferiore verso lo sfondo */
+/* Hero image food · grande, dominante, con sfumatura inferiore verso lo sfondo.
+   Altezza adattiva: 38vh con minimo (280) e massimo (440) → entra in viewport
+   senza scroll su tipici totem (1080p) e desktop. */
 .kt-hero-img{
   position: relative;
   width: 100%;
-  height: 460px;
+  height: clamp(280px, 38vh, 440px);
   border-radius: 28px;
   background-size: cover;
   background-position: center;
   background-color: var(--bg-soft);
   box-shadow: 0 18px 44px rgba(10,9,7,.20);
-  margin-bottom: 22px;
+  margin-bottom: 18px;
   overflow: hidden;
 }
 /* Gradient sfumato in basso che fonde la foto con lo sfondo splash → continuità visiva */
@@ -957,31 +958,30 @@ main#appContent{
 @media (max-width: 720px){ .kt-hero-img{ height: 360px; border-radius: 22px; } }
 @media (max-width: 480px){ .kt-hero-img{ height: 260px; border-radius: 18px; } }
 
-/* Hero text · white-space: pre-line per rendere \n del JS come a-capo nel browser
-   (titolo spezzato su 2 righe come nel mockup "kiosk adattivo") */
+/* Hero text · white-space: pre-line per rendere \n del JS come a-capo */
 .kiosk-totem .kiosk-hero-title{
   font-family: var(--font-display); font-style: italic; font-weight: 800;
-  font-size: 48px; line-height: 1.02; letter-spacing: -.025em;
-  color: var(--onyx); margin: 0 0 10px;
+  font-size: 44px; line-height: 1.02; letter-spacing: -.025em;
+  color: var(--onyx); margin: 0 0 8px;
   text-align: left;
   white-space: pre-line;
 }
 .kiosk-totem .kiosk-hero-sub{
-  color: var(--text-muted); font-size: 17px; line-height: 1.4;
-  margin: 0 0 22px;
+  color: var(--text-muted); font-size: 16px; line-height: 1.4;
+  margin: 0 0 16px;
   text-align: left;
 }
 .kiosk-totem .cta{
   width: 100%;
-  padding: 22px 32px;
+  padding: 18px 28px;
   background: var(--grad-brio); color: white;
   border-radius: 999px;
-  font-size: 19px; font-weight: 700; letter-spacing: .01em;
+  font-size: 18px; font-weight: 700; letter-spacing: .01em;
   box-shadow: var(--sh-3);
   border: 0;
   cursor: pointer;
   animation: pulse 2.4s ease-in-out infinite;
-  margin-bottom: 22px;
+  margin-bottom: 16px;
 }
 
 /* Featured cards row */
