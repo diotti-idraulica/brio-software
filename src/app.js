@@ -1303,6 +1303,35 @@ const KIOSK_QUICK_BUTTONS = [
   { key: "aperitivo", icon: "🍺", labelIt: "Aperitivo veloce", labelEn: "Quick aperitivo" },
 ];
 
+// Hero image grande (sopra al CTA) e featured cards (sotto al CTA) per fascia.
+// Foto reali in /brand/food/ (vedi moodboard foto.png originale).
+const KIOSK_HERO_IMAGE = {
+  mattina:   "/brand/food/brioche-caffe-clean.jpg",
+  pranzo:    "/brand/food/piadina-classica-clean.jpg",
+  aperitivo: "/brand/food/tagliere-salumi-formaggi-clean.jpg",
+};
+
+// Card "featured" sotto al CTA: 3-4 per fascia, ciascuna con foto + label + categoria slug
+const KIOSK_FEATURED = {
+  mattina: [
+    { labelIt: "Caffè fumante",     labelEn: "Hot coffee",       img: "/brand/food/caffe-clean.jpg",            cat: "caffetteria" },
+    { labelIt: "Brioche fresche",   labelEn: "Fresh croissants", img: "/brand/food/brioche-clean.jpg",          cat: "caffetteria" },
+    { labelIt: "Spremute naturali", labelEn: "Fresh juices",     img: "/brand/food/spremuta-arancia-clean.jpg", cat: "caffetteria" },
+  ],
+  pranzo: [
+    { labelIt: "Piadine",     labelEn: "Piadine",     img: "/brand/food/piadina-speciale-clean.jpg", cat: "pranzo" },
+    { labelIt: "Tramezzini",  labelEn: "Sandwiches",  img: "/brand/food/tramezzino-clean.jpg",       cat: "pranzo" },
+    { labelIt: "Insalatone",  labelEn: "Salad bowls", img: "/brand/food/insalatona-clean.jpg",       cat: "pranzo" },
+    { labelIt: "Bibite",      labelEn: "Drinks",      img: "/brand/food/spremuta-arancia-clean.jpg", cat: "bevande" },
+  ],
+  aperitivo: [
+    { labelIt: "Birre",     labelEn: "Beers",      img: "/brand/food/birra-menabrea-clean.jpg",       cat: "aperitivo" },
+    { labelIt: "Vini",      labelEn: "Wines",      img: "/brand/food/calice-prosecco-clean.jpg",      cat: "aperitivo" },
+    { labelIt: "Taglieri",  labelEn: "Platters",   img: "/brand/food/tagliere-mini-condiviso-clean.jpg", cat: "aperitivo" },
+    { labelIt: "Aperitivi", labelEn: "Aperitifs",  img: "/brand/food/stuzzichini-aperitivo-clean.jpg",   cat: "aperitivo" },
+  ],
+};
+
 // Restituisce la fascia corrente in base all'ora locale ("mattina"|"pranzo"|"aperitivo")
 function kioskDaypart(){
   const d = new Date();
@@ -1485,18 +1514,21 @@ function kioskRender(){
     const dp = kioskDaypart();
     const dpCfg = KIOSK_DAYPARTS[dp];
     const hero = KIOSK_HERO[dp];
+    const heroImg = KIOSK_HERO_IMAGE[dp];
     const lang = cur;
-    // Chip orario: "☀️ MATTINA · 07:00-10:30"
+
+    // Chip orario in cima al totem (sopra il logo)
     const chip = '<div class="kiosk-dp-chip"><span class="emoji">' + dpCfg.emoji + '</span><div><div class="dp-label">' + (lang === "en" ? dpCfg.labelEn : dpCfg.labelIt) + '</div><div class="dp-time">' + dpCfg.from + ' · ' + dpCfg.to + '</div></div></div>';
-    // 3 pulsanti "Ordine rapido"
-    const quickBtns = KIOSK_QUICK_BUTTONS.map((q) => {
-      const isActive = q.key === dp;
-      return '<button class="quick-btn ' + (isActive ? "active" : "") + '"' +
-        ' onclick="event.stopPropagation(); kioskQuickStart(\'' + q.key + '\')">' +
-          '<span class="qb-icon">' + q.icon + '</span>' +
-          '<span class="qb-label">' + escapeHtml(lang === "en" ? q.labelEn : q.labelIt) + '</span>' +
-      '</button>';
-    }).join("");
+
+    // Featured cards in basso (3-4 prodotti con foto reale per fascia)
+    const featured = KIOSK_FEATURED[dp] || [];
+    const featuredHtml = featured.map((f) => (
+      '<button class="kiosk-feat-card"' +
+        ' onclick="event.stopPropagation(); kioskQuickStartCat(\'' + escapeHtml(f.cat) + '\')">' +
+        '<div class="ff-photo" style="background-image:url(\'' + f.img + '\')"></div>' +
+        '<div class="ff-label">' + escapeHtml(lang === "en" ? f.labelEn : f.labelIt) + '</div>' +
+      '</button>'
+    )).join("");
 
     body =
       '<div class="kiosk-splash kiosk-dp-' + dp + '" data-action="kioskStart">' +
@@ -1506,15 +1538,28 @@ function kioskRender(){
           '<button class="' + (cur === "it" ? "active" : "") + '" onclick="event.stopPropagation(); kioskSetLang(\'it\')">🇮🇹 IT</button>' +
           '<button class="' + (cur === "en" ? "active" : "") + '" onclick="event.stopPropagation(); kioskSetLang(\'en\')">🇬🇧 EN</button>' +
         '</div>' +
-        '<div class="kiosk-hero-card">' +
-          '<div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
-          '<div class="tagline-small">' + escapeHtml(kioskT("splash.tagline")) + '.</div>' +
+        // Card centrale stretta (stile totem verticale)
+        '<div class="kiosk-totem">' +
+          // Header: logo + tagline (sinistra)
+          '<div class="kt-head">' +
+            '<div class="brio-logo"><span class="b">b</span><span class="rio">rio</span></div>' +
+            '<div class="tagline-small">' + escapeHtml(kioskT("splash.tagline")) + '.</div>' +
+          '</div>' +
+          // Hero image grande (food close-up)
+          '<div class="kt-hero-img" style="background-image:url(\'' + heroImg + '\')"></div>' +
+          // Hero text + tagline per fascia
           '<h1 class="kiosk-hero-title">' + escapeHtml(lang === "en" ? hero.titleEn : hero.titleIt) + '</h1>' +
           '<div class="kiosk-hero-sub">' + escapeHtml(lang === "en" ? hero.subEn : hero.subIt) + '</div>' +
+          // CTA primario
           '<button class="cta">' + escapeHtml(kioskT("splash.cta")) + ' →</button>' +
+          // Featured cards
+          '<div class="kt-featured">' + featuredHtml + '</div>' +
+          // Footer
+          '<div class="kt-footer">' +
+            '<span>Ordina qui · Ritira al banco</span>' +
+            '<span class="kt-acc">♿ Accessibilità</span>' +
+          '</div>' +
         '</div>' +
-        '<div class="kiosk-quick-row">' + quickBtns + '</div>' +
-        '<div class="footnote">' + escapeHtml(kioskT("splash.footnote")) + '</div>' +
       '</div>';
   } else if (KIOSK.step === "menu" || KIOSK.step === "personalize"){
     // In personalize il menu rimane visibile come sfondo; la sheet viene aggiunta sopra
@@ -1885,6 +1930,15 @@ function kioskStart(){
 function kioskQuickStart(daypartKey){
   KIOSK.daypartOverride = daypartKey;
   kioskPickDaypartCategory(daypartKey);
+  kioskGoto("menu");
+}
+
+// Card "featured" della splash: tap sulla foto di un prodotto/categoria
+// → entra al menu sulla categoria con quello slug.
+function kioskQuickStartCat(catSlug){
+  if (!KIOSK.categories || KIOSK.categories.length === 0){ kioskGoto("menu"); return; }
+  const cat = KIOSK.categories.find((c) => c.slug === catSlug);
+  if (cat) KIOSK.activeCatId = cat.id;
   kioskGoto("menu");
 }
 
