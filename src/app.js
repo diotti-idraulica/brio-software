@@ -387,6 +387,7 @@ const ROUTES = {
   "#/menu-admin": { name: "menu-admin", managerUp: true, render: renderMenuAdminPage },
   "#/fornitori":  { name: "fornitori",  managerUp: true, render: renderFornitoriPage },
   "#/chiusura":   { name: "chiusura",   managerUp: true, render: renderChiusuraPage },
+  "#/cassa-fiscale": { name: "cassa-fiscale", adminOnly: true, render: renderCassaFiscalePage },
   "#/menu":       { name: "menu",       public: true, fullscreen: true, render: renderMenuClientePage },
 };
 
@@ -447,6 +448,7 @@ function renderChrome(root){
     { hash: "#/fornitori", icon: "🚚", label: "Fornitori",  show: () => canManage() },
     { hash: "#/dashboard", icon: "📊", label: "Dashboard",  show: () => isAdmin() },
     { hash: "#/chiusura",  icon: "🔒", label: "Chiusura",   show: () => canManage() },
+    { hash: "#/cassa-fiscale", icon: "🧾", label: "Cassa fiscale", show: () => isAdmin() },
   ];
 
   const navHtml = nav.filter(n => n.show()).map(n => (
@@ -546,6 +548,7 @@ async function renderHomePage(main){
     { hash: "#/fornitori", icon: "🚚", title: "Fornitori",  desc: "Ordini automatici e anagrafica",         show: () => canManage() },
     { hash: "#/dashboard", icon: "📊", title: "Dashboard",  desc: "KPI giorno, food cost, allarmi",         show: () => isAdmin() },
     { hash: "#/chiusura",  icon: "🔒", title: "Chiusura",   desc: "Chiusura cassa giornaliera",             show: () => canManage() },
+    { hash: "#/cassa-fiscale", icon: "🧾", title: "Cassa fiscale", desc: "Configura RT + POS, log scontrini fiscali", show: () => isAdmin() },
   ];
 
   const cards = modules.filter(m => m.show()).map(m => (
@@ -1164,9 +1167,33 @@ async function cassaConfirmOrder(){
   // Aggiorna l'oggetto locale con il status finale per la receipt
   ord.status = "paid";
 
-  // 4) UI: chiudi modal pagamento, mostra modal successo
+  // 5) CASSA FISCALE — emette scontrino su RT + comando POS (in test simula).
+  //    In modalità live (TODO) può fallire: in quel caso mostriamo l'errore
+  //    ma l'ordine resta paid (la fiscalità si può riprocessare dal log).
+  let fiscalResult = null;
+  try {
+    fiscalResult = await fiscalEmettiScontrino({
+      order_id: ord.id,
+      amount_cents: t.total,
+      payment_method: CASSA.paymentMethod,
+      lines: CASSA.cart.map((r) => ({
+        name: r.product_name,
+        qty: r.qty,
+        unit_price_cents: r.unit_price_cents,
+        vat_rate: r.vat_rate,
+      })),
+    });
+    if (!fiscalResult.ok && !fiscalResult.skipped){
+      toast("Scontrino fiscale: " + (fiscalResult.error || "errore"), "error");
+    }
+  } catch(e){
+    err("[cassa] fiscal", e);
+    toast("Errore scontrino fiscale: " + (e.message || e), "error");
+  }
+
+  // 6) UI: chiudi modal pagamento, mostra modal successo
   cassaCloseCheckout();
-  showReceiptModal(ord, change);
+  showReceiptModal(ord, change, fiscalResult);
 
   // 5) Svuota carrello + ricarica giacenze (i trigger DB hanno scalato)
   CASSA.cart = [];
@@ -1176,7 +1203,22 @@ async function cassaConfirmOrder(){
   CASSA.saving = false;
 }
 
-function showReceiptModal(order, change){
+function showReceiptModal(order, change, fiscal){
+  // Sezione scontrino fiscale: mostra numero se emesso, badge TEST se simulato, errore se fallito
+  let fiscalBlock = "";
+  if (fiscal && fiscal.ok){
+    fiscalBlock = '<div class="receipt-fiscal ok">' +
+      '<div class="muted" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em">Scontrino fiscale</div>' +
+      '<div style="font-size:15px;font-weight:600;margin-top:2px">' + escapeHtml(fiscal.receipt_number) +
+        (fiscal.simulated ? ' <span class="cfi-log-test">TEST</span>' : '') + '</div>' +
+      (fiscal.rt_serial ? '<div class="muted" style="font-size:11px;margin-top:2px">Matricola RT ' + escapeHtml(fiscal.rt_serial) + '</div>' : "") +
+    '</div>';
+  } else if (fiscal && !fiscal.ok && !fiscal.skipped){
+    fiscalBlock = '<div class="receipt-fiscal err">' +
+      '<div style="font-size:13px;font-weight:600;color:var(--danger)">⚠️ Scontrino fiscale non emesso</div>' +
+      '<div class="muted" style="font-size:12px;margin-top:2px">' + escapeHtml(fiscal.error || "Errore sconosciuto") + '</div>' +
+    '</div>';
+  }
   document.body.insertAdjacentHTML("beforeend",
     '<div class="modal-backdrop" id="receiptModal" onclick="if(event.target===this) cassaCloseReceipt()">' +
       '<div class="modal">' +
@@ -1187,6 +1229,7 @@ function showReceiptModal(order, change){
             '<div class="num">#' + order.daily_number + '</div>' +
             '<div class="hint">Totale ' + euroFmt(order.total_cents) + ' · ' + (order.payment_method === "cash" ? "Contanti" : "Carta") + '</div>' +
             (change > 0 ? '<div style="background:var(--bg-soft);padding:14px;border-radius:10px;margin-top:14px"><div class="muted" style="font-size:12px">Resto da dare</div><div style="font-size:28px;font-weight:700;color:var(--emerald)">' + euroFmt(change) + '</div></div>' : "") +
+            fiscalBlock +
             '<div class="hint mt-16" style="font-size:11px">Numero ordine giornaliero · ' + timeFmt(new Date()) + '</div>' +
           '</div>' +
         '</div>' +
@@ -4000,3 +4043,385 @@ async function chiusuraExportCsv(){
 function euroPlainCsv(c){
   return (Number(c || 0) / 100).toFixed(2).replace(".", ",");
 }
+
+// ============================================================
+// CASSA FISCALE · integrazione RT + POS
+// ============================================================
+// L'app NON emette scontrini fiscali (vietato dalla normativa italiana):
+// dialoga con hardware esterno certificato Agenzia Entrate.
+//
+// In modalità test (default): simula tutto e logga in fiscal_receipts_log.
+// In modalità live: chiama RT/POS via HTTP/TCP. Da implementare quando
+// l'hardware sarà noto (vedi CASSA_FISCALE_HANDOFF.md per protocolli).
+// ============================================================
+
+const CFI = {
+  loaded: false,
+  config: null,
+  saving: false,
+  recentLog: [],
+  testLogText: "",
+};
+
+const RT_MODELS = [
+  { value: "epson_fp90",      label: "Epson FP-90 III" },
+  { value: "rch_printf",      label: "RCH Print!F" },
+  { value: "custom_q3",       label: "Custom Q3X" },
+  { value: "olivetti_prt100", label: "Olivetti PRT 100 FT-PR" },
+  { value: "altro",           label: "Altro" },
+];
+const POS_BRANDS = [
+  { value: "ingenico",  label: "Ingenico" },
+  { value: "pax",       label: "PAX" },
+  { value: "verifone",  label: "Verifone" },
+  { value: "nexi",      label: "Nexi" },
+  { value: "sumup",     label: "SumUp" },
+  { value: "altro",     label: "Altro" },
+];
+
+async function renderCassaFiscalePage(main){
+  main.innerHTML =
+    '<div class="page-header">' +
+      '<div><h1>Cassa fiscale</h1><div class="sub muted">Configurazione RT (Registratore Telematico) + POS bancario</div></div>' +
+      '<div class="page-actions"><button class="btn" data-action="cfiRefresh">⟲ Ricarica</button></div>' +
+    '</div>' +
+    '<div id="cfiBody"><div class="muted" style="padding:24px">Carico configurazione…</div></div>';
+  await cfiLoad();
+  cfiRender();
+}
+
+async function cfiLoad(){
+  if (!BRIO.org) return;
+  const orgId = BRIO.org.id;
+  const [confRes, logRes] = await Promise.all([
+    supa().from("rt_config").select("*").eq("org_id", orgId).maybeSingle(),
+    supa().from("fiscal_receipts_log").select("*").eq("org_id", orgId).order("created_at", { ascending: false }).limit(20),
+  ]);
+  if (confRes.error){ err("[cfi] load config", confRes.error); toast("Errore caricamento configurazione: " + confRes.error.message, "error"); }
+  CFI.config = confRes.data || cfiDefaultConfig(orgId);
+  CFI.recentLog = logRes.data || [];
+  CFI.loaded = true;
+}
+
+function cfiDefaultConfig(orgId){
+  return {
+    org_id: orgId,
+    rt_active: false, rt_protocol: "http", rt_timeout_sec: 10,
+    pos_active: false, pos_protocol: "p17", pos_timeout_sec: 60,
+    test_mode: true, notes: "",
+  };
+}
+
+async function cfiRefresh(){
+  CFI.loaded = false;
+  await cfiLoad();
+  cfiRender();
+  toast("Configurazione ricaricata", "success");
+}
+
+function cfiStatusBadge(c){
+  if (c.test_mode) return '<span class="cfi-badge test">🧪 Modalità test</span>';
+  if (c.rt_active && c.pos_active) return '<span class="cfi-badge live">✅ Live · RT + POS attivi</span>';
+  if (c.rt_active || c.pos_active) return '<span class="cfi-badge partial">⚙️ Configurazione parziale</span>';
+  return '<span class="cfi-badge off">⏸ Disattivata</span>';
+}
+
+function cfiRender(){
+  const body = document.getElementById("cfiBody");
+  if (!body) return;
+  const c = CFI.config || cfiDefaultConfig(BRIO.org ? BRIO.org.id : null);
+
+  body.innerHTML =
+    '<div class="cfi-banner">' + cfiStatusBadge(c) +
+      '<div class="cfi-banner-text">' +
+        (c.test_mode
+          ? 'In modalità test ogni scontrino è simulato e tracciato in <code>fiscal_receipts_log</code>. Disattiva la modalità test solo quando hardware è installato e collaudato.'
+          : 'Modalità LIVE: il software chiama hardware reale. Verifica che RT e POS siano accesi e raggiungibili.'
+        ) +
+      '</div>' +
+    '</div>' +
+
+    '<form class="cfi-form" data-form="cfiSave">' +
+
+      // Modalità test toggle
+      '<div class="dash-section">' +
+        '<label class="cfi-toggle">' +
+          '<input type="checkbox" name="test_mode"' + (c.test_mode ? " checked" : "") + ' />' +
+          '<span class="toggle-text"><strong>Modalità test</strong> — simula chiamate hardware senza emettere scontrini reali</span>' +
+        '</label>' +
+      '</div>' +
+
+      // RT card
+      '<div class="dash-section">' +
+        '<div class="dash-section-head">' +
+          '<h3>📟 Registratore Telematico (RT)</h3>' +
+          '<label class="cfi-toggle"><input type="checkbox" name="rt_active"' + (c.rt_active ? " checked" : "") + ' /><span class="toggle-text">Attivo</span></label>' +
+        '</div>' +
+        '<div class="cfi-grid">' +
+          cfiField("IP", "rt_ip", c.rt_ip, "192.168.1.50") +
+          cfiField("Porta", "rt_port", c.rt_port, "8080", "number") +
+          cfiSelect("Modello", "rt_model", c.rt_model, RT_MODELS) +
+          cfiSelect("Protocollo", "rt_protocol", c.rt_protocol, [
+            { value: "http", label: "HTTP" }, { value: "https", label: "HTTPS" }, { value: "tcp", label: "TCP" }
+          ]) +
+          cfiField("Path endpoint", "rt_endpoint_path", c.rt_endpoint_path, "/cgi-bin/fpmate.cgi") +
+          cfiField("Timeout (s)", "rt_timeout_sec", c.rt_timeout_sec, "10", "number") +
+          cfiField("User (opz)", "rt_user", c.rt_user, "") +
+          cfiField("Password (opz)", "rt_password", c.rt_password, "", "password") +
+        '</div>' +
+        '<div class="cfi-actions">' +
+          '<button type="button" class="btn" data-action="cfiTestRT">⚙️ Test RT</button>' +
+        '</div>' +
+      '</div>' +
+
+      // POS card
+      '<div class="dash-section">' +
+        '<div class="dash-section-head">' +
+          '<h3>💳 POS bancario</h3>' +
+          '<label class="cfi-toggle"><input type="checkbox" name="pos_active"' + (c.pos_active ? " checked" : "") + ' /><span class="toggle-text">Attivo</span></label>' +
+        '</div>' +
+        '<div class="cfi-grid">' +
+          cfiField("IP", "pos_ip", c.pos_ip, "192.168.1.60") +
+          cfiField("Porta", "pos_port", c.pos_port, "8081", "number") +
+          cfiSelect("Marca", "pos_brand", c.pos_brand, POS_BRANDS) +
+          cfiSelect("Protocollo", "pos_protocol", c.pos_protocol, [
+            { value: "p17", label: "Protocollo 17 (XML17)" }, { value: "rest", label: "REST JSON" }, { value: "altro", label: "Altro" }
+          ]) +
+          cfiField("Terminal ID", "pos_terminal_id", c.pos_terminal_id, "12345678") +
+          cfiField("Timeout (s)", "pos_timeout_sec", c.pos_timeout_sec, "60", "number") +
+        '</div>' +
+        '<div class="cfi-actions">' +
+          '<button type="button" class="btn" data-action="cfiTestPOS">⚙️ Test POS</button>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="dash-section">' +
+        '<h3>Note</h3>' +
+        '<textarea class="textarea" name="notes" placeholder="Note libere su matricola, taratura, contatti assistenza, scadenze verifiche, …">' + escapeHtml(c.notes || "") + '</textarea>' +
+      '</div>' +
+
+      '<div class="cfi-save-bar">' +
+        '<button type="submit" class="btn btn-primary btn-lg"' + (CFI.saving ? " disabled" : "") + '>' + (CFI.saving ? "Salvo…" : "💾 Salva configurazione") + '</button>' +
+      '</div>' +
+    '</form>' +
+
+    // Output test
+    (CFI.testLogText
+      ? '<div class="dash-section"><div class="dash-section-head"><h3>📋 Output ultimo test</h3><button class="btn btn-ghost" data-action="cfiClearTestLog">✕</button></div><pre class="cfi-test-log">' + escapeHtml(CFI.testLogText) + '</pre></div>'
+      : "") +
+
+    // Log scontrini recenti
+    cfiRenderRecentLog();
+}
+
+function cfiField(label, name, value, placeholder, type){
+  return '<label class="field cfi-field">' +
+    '<span class="label">' + escapeHtml(label) + '</span>' +
+    '<input class="input" name="' + name + '" type="' + (type || "text") + '"' +
+      ' value="' + escapeHtml(value == null ? "" : String(value)) + '"' +
+      ' placeholder="' + escapeHtml(placeholder || "") + '" />' +
+  '</label>';
+}
+
+function cfiSelect(label, name, value, opts){
+  const options = opts.map((o) => (
+    '<option value="' + escapeHtml(o.value) + '"' + (value === o.value ? " selected" : "") + '>' + escapeHtml(o.label) + '</option>'
+  )).join("");
+  return '<label class="field cfi-field">' +
+    '<span class="label">' + escapeHtml(label) + '</span>' +
+    '<select class="select" name="' + name + '"><option value="">—</option>' + options + '</select>' +
+  '</label>';
+}
+
+function cfiRenderRecentLog(){
+  if (CFI.recentLog.length === 0){
+    return '<div class="dash-section"><h3>📜 Ultimi scontrini fiscali</h3><div class="muted">Nessuno scontrino emesso finora.</div></div>';
+  }
+  const rows = CFI.recentLog.map((l) => {
+    const tone = l.status === "completed" ? "ok" : (l.status.includes("error") ? "err" : "warn");
+    return '<div class="cfi-log-row cfi-log-' + tone + '">' +
+      '<div class="cfi-log-icon">' + (tone === "ok" ? "✅" : (tone === "err" ? "❌" : "⏳")) + '</div>' +
+      '<div class="cfi-log-main">' +
+        '<div><strong>' + escapeHtml(l.receipt_number || "—") + '</strong>' + (l.test_mode ? ' <span class="cfi-log-test">TEST</span>' : '') + '</div>' +
+        '<div class="muted" style="font-size:12px">' + dateFmt(l.created_at) + " " + timeFmt(l.created_at) + ' · ' + escapeHtml(l.payment_method || "—") + ' · ' + escapeHtml(l.status) + (l.error_msg ? " · " + escapeHtml(l.error_msg) : "") + '</div>' +
+      '</div>' +
+      '<div class="cfi-log-amount">' + euroFmt(l.amount_cents) + '</div>' +
+    '</div>';
+  }).join("");
+  return '<div class="dash-section">' +
+    '<div class="dash-section-head"><h3>📜 Ultimi scontrini fiscali (' + CFI.recentLog.length + ')</h3></div>' +
+    '<div class="cfi-log-list">' + rows + '</div>' +
+  '</div>';
+}
+
+async function onCfiSaveSubmit(form){
+  if (CFI.saving) return;
+  CFI.saving = true;
+  cfiRender();
+  const fd = new FormData(form);
+  const payload = {
+    org_id: BRIO.org.id,
+    rt_active: fd.get("rt_active") === "on",
+    rt_ip: emptyToNull(fd.get("rt_ip")),
+    rt_port: parseIntOrNull(fd.get("rt_port")),
+    rt_model: emptyToNull(fd.get("rt_model")),
+    rt_protocol: emptyToNull(fd.get("rt_protocol")) || "http",
+    rt_user: emptyToNull(fd.get("rt_user")),
+    rt_password: emptyToNull(fd.get("rt_password")),
+    rt_endpoint_path: emptyToNull(fd.get("rt_endpoint_path")),
+    rt_timeout_sec: parseIntOrNull(fd.get("rt_timeout_sec")) || 10,
+    pos_active: fd.get("pos_active") === "on",
+    pos_ip: emptyToNull(fd.get("pos_ip")),
+    pos_port: parseIntOrNull(fd.get("pos_port")),
+    pos_brand: emptyToNull(fd.get("pos_brand")),
+    pos_protocol: emptyToNull(fd.get("pos_protocol")) || "p17",
+    pos_terminal_id: emptyToNull(fd.get("pos_terminal_id")),
+    pos_timeout_sec: parseIntOrNull(fd.get("pos_timeout_sec")) || 60,
+    test_mode: fd.get("test_mode") === "on",
+    notes: emptyToNull(fd.get("notes")),
+  };
+  const { data, error } = await supa()
+    .from("rt_config")
+    .upsert(payload, { onConflict: "org_id" })
+    .select()
+    .single();
+  CFI.saving = false;
+  if (error){
+    err("[cfi] save", error);
+    toast("Errore salvataggio: " + error.message, "error");
+    cfiRender();
+    return;
+  }
+  CFI.config = data;
+  toast("Configurazione salvata", "success");
+  cfiRender();
+}
+
+function emptyToNull(v){
+  if (v == null) return null;
+  const s = String(v).trim();
+  return s === "" ? null : s;
+}
+function parseIntOrNull(v){
+  if (v == null || v === "") return null;
+  const n = parseInt(v, 10);
+  return isNaN(n) ? null : n;
+}
+
+async function cfiTestRT(){
+  const c = CFI.config || {};
+  if (c.test_mode){
+    CFI.testLogText = "🧪 SIMULAZIONE RT (modalità test)\n" +
+      "Modello: " + (c.rt_model || "—") + "\n" +
+      "Endpoint: " + (c.rt_protocol || "http") + "://" + (c.rt_ip || "?") + ":" + (c.rt_port || "?") + (c.rt_endpoint_path || "") + "\n\n" +
+      "→ Apro connessione…\n" +
+      "→ Invio comando di echo/ping…\n" +
+      "← Risposta simulata: OK (latency 45ms)\n" +
+      "← Matricola RT simulata: 99TEST" + Math.floor(Math.random()*1000000) + "\n\n" +
+      "✅ Test simulato completato. In modalità test nessuna chiamata reale è stata fatta.";
+    toast("Test RT simulato", "success");
+  } else {
+    CFI.testLogText = "❌ Modalità LIVE non ancora implementata.\n\n" +
+      "Per il modello \"" + (c.rt_model || "?") + "\" il protocollo (" + (c.rt_protocol || "http") + ") richiede l'integrazione delle chiamate reali HTTP/TCP all'indirizzo " +
+      (c.rt_ip || "?") + ":" + (c.rt_port || "?") + ".\n\n" +
+      "Vedi CASSA_FISCALE_HANDOFF.md per riferimento ai protocolli.";
+    toast("Modalità live: integrazione hardware da implementare", "error");
+  }
+  cfiRender();
+}
+
+async function cfiTestPOS(){
+  const c = CFI.config || {};
+  if (c.test_mode){
+    CFI.testLogText = "🧪 SIMULAZIONE POS (modalità test)\n" +
+      "Marca: " + (c.pos_brand || "—") + "\n" +
+      "Endpoint: http://" + (c.pos_ip || "?") + ":" + (c.pos_port || "?") + "\n" +
+      "Terminal ID: " + (c.pos_terminal_id || "—") + "\n" +
+      "Protocollo: " + (c.pos_protocol || "p17") + "\n\n" +
+      "→ Apro connessione…\n" +
+      "→ Invio richiesta echo…\n" +
+      "← Risposta simulata: Esito codice=00 (OK), latency 78ms\n\n" +
+      "✅ Test simulato completato.";
+    toast("Test POS simulato", "success");
+  } else {
+    CFI.testLogText = "❌ Modalità LIVE non ancora implementata.\n\n" +
+      "Il POS (" + (c.pos_brand || "?") + ", protocollo " + (c.pos_protocol || "p17") + ") richiede l'integrazione reale all'indirizzo " +
+      (c.pos_ip || "?") + ":" + (c.pos_port || "?") + ".";
+    toast("Modalità live: integrazione hardware da implementare", "error");
+  }
+  cfiRender();
+}
+
+function cfiClearTestLog(){ CFI.testLogText = ""; cfiRender(); }
+
+// ============================================================
+// API: fiscalEmettiScontrino — chiamata dal checkout cassa
+// ============================================================
+// Args:
+//   order_id (uuid), amount_cents (bigint), payment_method (string)
+//   lines (array di { name, qty, unit_price_cents, vat_rate })
+// Ritorna: { ok: boolean, receipt_number?, error?, simulated?, status }
+async function fiscalEmettiScontrino(args){
+  if (!BRIO.org) return { ok: false, error: "Org non caricata" };
+  const orgId = BRIO.org.id;
+
+  // Carica config (cache se già loaded)
+  if (!CFI.loaded){
+    const { data } = await supa().from("rt_config").select("*").eq("org_id", orgId).maybeSingle();
+    CFI.config = data || cfiDefaultConfig(orgId);
+    CFI.loaded = true;
+  }
+  const c = CFI.config;
+
+  // Se né RT né POS sono attivi → niente scontrino fiscale (modalità "solo gestionale")
+  if (!c.rt_active && !c.pos_active && !c.test_mode){
+    return { ok: false, error: "Cassa fiscale disattivata", skipped: true };
+  }
+
+  // Inserisci log "in_progress"
+  const logPayload = {
+    org_id: orgId,
+    order_id: args.order_id || null,
+    amount_cents: args.amount_cents || 0,
+    payment_method: args.payment_method || null,
+    test_mode: !!c.test_mode,
+    status: "in_progress",
+    emitted_by: BRIO.user ? BRIO.user.id : null,
+  };
+  const { data: logRow } = await supa().from("fiscal_receipts_log").insert(logPayload).select().single();
+  const logId = logRow ? logRow.id : null;
+
+  // ============ MODALITÀ TEST ============
+  if (c.test_mode){
+    // Simula latency hardware (600ms)
+    await new Promise((r) => setTimeout(r, 600));
+    const receiptNumber = "TEST-" + new Date().toISOString().slice(0,10).replace(/-/g, "") + "-" + Math.floor(Math.random()*100000).toString().padStart(5, "0");
+    const rtSerial = "99TEST" + Math.floor(Math.random()*1000000);
+    const upd = {
+      status: "completed",
+      receipt_number: receiptNumber,
+      rt_serial: rtSerial,
+      pos_response: { simulated: true, esito: "00", method: args.payment_method },
+      rt_response:  { simulated: true, scontrino: receiptNumber, matricola: rtSerial, lines: args.lines || [] },
+    };
+    if (logId) await supa().from("fiscal_receipts_log").update(upd).eq("id", logId);
+    return { ok: true, simulated: true, receipt_number: receiptNumber, rt_serial: rtSerial, status: "completed" };
+  }
+
+  // ============ MODALITÀ LIVE — TODO ============
+  // Pseudocode:
+  //  1) Se payment_method === 'card' && c.pos_active: chiama POS (Protocollo 17 / REST)
+  //     → in errore: update log stato='pos_error' + return
+  //  2) Se c.rt_active: costruisci comando scontrino e chiama RT
+  //     → endpoint dipende da rt_model (epson_fp90 → /cgi-bin/fpmate.cgi XML SOAP, ecc)
+  //     → parse risposta: receipt_number, rt_serial
+  //  3) Update log stato='completed' con receipt_number + rt_serial
+  //
+  // Implementazione bloccata dalla scelta hardware. Vedi CASSA_FISCALE_HANDOFF.md
+  // sez. "Specifiche tecniche dei protocolli da implementare".
+
+  const errMsg = "Modalità live non ancora implementata. Configurare modalità test oppure completare l'integrazione hardware.";
+  if (logId) await supa().from("fiscal_receipts_log").update({ status: "rt_error", error_msg: errMsg }).eq("id", logId);
+  return { ok: false, error: errMsg, status: "rt_error" };
+}
+

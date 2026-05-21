@@ -378,6 +378,97 @@ main#appContent{
 .ch-actions .muted{ font-size: 12px; max-width: 360px; }
 
 /* ============================================================
+   CASSA FISCALE
+   ============================================================ */
+.cfi-banner{
+  background: linear-gradient(180deg, #FEFCE8 0%, var(--bg-card) 60%);
+  border: 1px solid rgba(245,158,11,.35);
+  border-radius: var(--r-lg);
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  display: flex; gap: 14px; align-items: flex-start;
+}
+.cfi-banner-text{ font-size: 13px; color: var(--text); line-height: 1.5; flex: 1; }
+.cfi-banner-text code{ background: rgba(10,9,7,.06); padding: 1px 6px; border-radius: 4px; font-size: 11px; }
+.cfi-badge{
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 999px;
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  white-space: nowrap;
+}
+.cfi-badge.test{ background: #FEF3C7; color: #92400E; }
+.cfi-badge.live{ background: #DCFCE7; color: #166534; }
+.cfi-badge.partial{ background: #FEF3C7; color: #92400E; }
+.cfi-badge.off{ background: var(--bg-soft); color: var(--text-muted); }
+
+.cfi-form{ display:flex; flex-direction: column; gap: 0; }
+.cfi-toggle{
+  display:flex; align-items: center; gap: 12px;
+  cursor: pointer; user-select: none;
+}
+.cfi-toggle input[type="checkbox"]{ width: 18px; height: 18px; cursor: pointer; }
+.cfi-toggle .toggle-text{ font-size: 14px; }
+
+.cfi-grid{
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.cfi-field{ margin: 0; }
+
+.cfi-actions{ margin-top: 16px; display:flex; gap: 10px; flex-wrap: wrap; }
+
+.cfi-save-bar{
+  position: sticky; bottom: 0;
+  background: linear-gradient(180deg, transparent 0%, var(--bg) 30%);
+  padding: 16px 0;
+  display:flex; justify-content: flex-end; gap: 10px;
+}
+
+.cfi-test-log{
+  background: #0F172A; color: #E2E8F0;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 320px; overflow: auto;
+}
+
+.cfi-log-list{ display:flex; flex-direction: column; gap: 6px; }
+.cfi-log-row{
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  gap: 12px; align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.cfi-log-row.cfi-log-ok{ background: #F0FDF4; border-color: rgba(16,185,129,.25); }
+.cfi-log-row.cfi-log-err{ background: #FEF2F2; border-color: rgba(220,38,38,.25); }
+.cfi-log-row.cfi-log-warn{ background: #FFFBEB; border-color: rgba(245,158,11,.25); }
+.cfi-log-icon{ font-size: 18px; }
+.cfi-log-main{ min-width: 0; }
+.cfi-log-amount{ font-variant-numeric: tabular-nums; font-weight: 700; }
+.cfi-log-test{
+  display: inline-block;
+  background: #FEF3C7; color: #92400E;
+  padding: 1px 6px; border-radius: 4px;
+  font-size: 9px; font-weight: 800; letter-spacing: .05em;
+  vertical-align: middle;
+}
+
+/* Receipt modal: blocco fiscale */
+.receipt-fiscal{
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  text-align: left;
+}
+.receipt-fiscal.ok{ background: #F0FDF4; border: 1px solid rgba(16,185,129,.3); }
+.receipt-fiscal.err{ background: #FEF2F2; border: 1px solid rgba(220,38,38,.3); }
+
+/* ============================================================
    GRID UTILS
    ============================================================ */
 .grid{ display:grid; gap: 16px; }
