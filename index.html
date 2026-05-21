@@ -1413,6 +1413,9 @@ main#appContent{
   font-size: 16px; color: white;
 }
 .kpz-opt.selected .check{ background: var(--emerald); border-color: var(--emerald); }
+/* Variant radio (group customization, es. size): pallino pieno invece di check */
+.kpz-opt.kpz-radio.selected .check{ background: white; border: 2px solid var(--emerald); color: var(--emerald); font-size: 22px; line-height: 1; padding-bottom: 4px; }
+.kpz-opt.kpz-radio:not(.selected) .check{ background: transparent; }
 .kpz-opt .delta{ color: var(--emerald); font-weight: 600; font-size: 14px; margin-right: 12px; }
 .kpz-foot{ padding: 14px 24px 22px; display:flex; gap:10px; border-top: 1px solid var(--line); background: var(--bg-card); position: sticky; bottom: 0; }
 .kpz-foot button{

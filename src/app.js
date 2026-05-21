@@ -1893,6 +1893,10 @@ function kioskAddCombo(skus){
 }
 
 // =========== PERSONALIZZAZIONE (bottom sheet) ==========
+// Customization options:
+// - default toggle (checkbox): selezioni indipendenti
+// - { group: "name" }: mutuamente esclusive (radio), una sola selezionata per group
+// - { default: true }: option pre-selezionata all'apertura del modal
 function kioskRenderPersonalize(){
   const p = KIOSK.pendingProduct;
   if (!p) return "";
@@ -1905,18 +1909,50 @@ function kioskRenderPersonalize(){
   });
   const finalPrice = Number(p.price_cents) + extra;
 
-  const opts = customs.map((c) => {
+  // Raggruppo le opzioni: quelle con stesso group vanno in una sezione radio
+  // Quelle senza group restano standalone (toggle)
+  const groups = {};
+  const standalone = [];
+  customs.forEach((c) => {
+    if (c.group){
+      if (!groups[c.group]) groups[c.group] = [];
+      groups[c.group].push(c);
+    } else {
+      standalone.push(c);
+    }
+  });
+
+  function renderOpt(c, isRadio){
     const sel = !!KIOSK.pendingSelections[c.label];
     const delta = Number(c.price_delta_cents || 0);
-    return '<div class="kpz-opt ' + (sel ? "selected" : "") + '"' +
-      ' data-action="kioskToggleCustomization" data-args=\'["' + c.label.replace(/'/g, "\\u0027").replace(/"/g, "&quot;") + '"]\'>' +
+    const labelEsc = c.label.replace(/'/g, "\\u0027").replace(/"/g, "&quot;");
+    return '<div class="kpz-opt ' + (sel ? "selected" : "") + (isRadio ? " kpz-radio" : "") + '"' +
+      ' data-action="kioskToggleCustomization" data-args=\'["' + labelEsc + '"]\'>' +
       '<div>' + escapeHtml(c.label) + '</div>' +
       '<div class="flex items-center">' +
-        (delta > 0 ? '<span class="delta">+' + euroFmt(delta) + '</span>' : '') +
-        '<span class="check">' + (sel ? '✓' : '') + '</span>' +
+        (delta !== 0 ? '<span class="delta">' + (delta > 0 ? "+" : "−") + euroFmt(Math.abs(delta)) + '</span>' : '') +
+        '<span class="check">' + (sel ? (isRadio ? '●' : '✓') : '') + '</span>' +
       '</div>' +
     '</div>';
-  }).join("");
+  }
+
+  // Render: prima i group (es. "Size"), poi le opzioni standalone
+  let sectionsHtml = "";
+  Object.keys(groups).forEach((groupName) => {
+    const groupLabel = groupName.charAt(0).toUpperCase() + groupName.slice(1);
+    sectionsHtml +=
+      '<div class="kpz-section">' +
+        '<div class="lbl">' + escapeHtml(groupLabel) + '</div>' +
+        groups[groupName].map((c) => renderOpt(c, true)).join("") +
+      '</div>';
+  });
+  if (standalone.length > 0){
+    sectionsHtml +=
+      '<div class="kpz-section">' +
+        '<div class="lbl">' + escapeHtml(kioskT("personalize.options")) + '</div>' +
+        standalone.map((c) => renderOpt(c, false)).join("") +
+      '</div>';
+  }
 
   return (
     '<div class="kpz-back" id="kpzModal" onclick="if(event.target===this) kioskCancelPersonalize()">' +
@@ -1931,10 +1967,7 @@ function kioskRenderPersonalize(){
         '<div class="kpz-body">' +
           (customs.length === 0
             ? '<div class="muted text-center" style="padding:30px;font-size:14px">' + escapeHtml(kioskT("personalize.none")) + '</div>'
-            : '<div class="kpz-section">' +
-                '<div class="lbl">' + escapeHtml(kioskT("personalize.options")) + '</div>' +
-                opts +
-              '</div>'
+            : sectionsHtml
           ) +
         '</div>' +
         '<div class="kpz-foot">' +
@@ -2179,33 +2212,51 @@ function kioskOnProductTap(productId){
     return;
   }
   KIOSK.pendingProduct = p;
+  // Pre-seleziona le opzioni con default: true (utile per i group radio:
+  // es. "Media 40cl" della birra è la size pre-selezionata all'apertura)
   KIOSK.pendingSelections = {};
+  (p.customizations || []).forEach((c) => {
+    if (c.default) KIOSK.pendingSelections[c.label] = true;
+  });
   KIOSK.step = "personalize";
   kioskRender();
 }
 
 function kioskToggleCustomization(label){
-  KIOSK.pendingSelections[label] = !KIOSK.pendingSelections[label];
-  // Aggiornamento incrementale del modal: niente flicker, niente ri-animazione.
-  // Se il modal non c'è (caso anomalo), full render come fallback.
-  const modal = document.getElementById("kpzModal");
   const p = KIOSK.pendingProduct;
-  if (!modal || !p){ kioskRender(); return; }
+  if (!p) return;
+  const customs = Array.isArray(p.customizations) ? p.customizations : [];
+  const target = customs.find((c) => c.label === label);
 
-  // Aggiorna stato visivo di ogni opzione (classe .selected + check ✓)
+  if (target && target.group){
+    // Radio: deseleziona tutte le altre dello stesso group, seleziona questa
+    customs.forEach((c) => {
+      if (c.group === target.group) KIOSK.pendingSelections[c.label] = false;
+    });
+    KIOSK.pendingSelections[label] = true;
+  } else {
+    // Toggle standard (checkbox)
+    KIOSK.pendingSelections[label] = !KIOSK.pendingSelections[label];
+  }
+
+  // Aggiornamento incrementale del modal: niente flicker
+  const modal = document.getElementById("kpzModal");
+  if (!modal){ kioskRender(); return; }
+
+  // Aggiorna stato visivo di ogni opzione
   modal.querySelectorAll(".kpz-opt").forEach((el) => {
     const args = el.getAttribute("data-args");
     let lbl = null;
     try { lbl = JSON.parse(args)[0]; } catch(e){}
     if (!lbl) return;
     const sel = !!KIOSK.pendingSelections[lbl];
+    const isRadio = el.classList.contains("kpz-radio");
     el.classList.toggle("selected", sel);
     const check = el.querySelector(".check");
-    if (check) check.textContent = sel ? "✓" : "";
+    if (check) check.textContent = sel ? (isRadio ? "●" : "✓") : "";
   });
 
   // Aggiorna il prezzo nel bottone "Aggiungi · € X"
-  const customs = (p.customizations || []);
   let extra = 0;
   customs.forEach((c) => {
     if (KIOSK.pendingSelections[c.label]) extra += Number(c.price_delta_cents || 0);
