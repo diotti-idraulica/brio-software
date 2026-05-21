@@ -1,11 +1,27 @@
 [
   {
+    "original": "acqua frizzante.png",
+    "slug": "acqua-frizzante",
+    "url": "/brand/prodotti/acqua-frizzante.jpg",
+    "size_kb": 88.5,
+    "width": 1024,
+    "height": 683
+  },
+  {
     "original": "acqua naturale.png",
     "slug": "acqua-naturale",
     "url": "/brand/prodotti/acqua-naturale.jpg",
     "size_kb": 86.3,
     "width": 1024,
     "height": 683
+  },
+  {
+    "original": "birra moretti 33cl.png",
+    "slug": "birra-moretti-33cl",
+    "url": "/brand/prodotti/birra-moretti-33cl.jpg",
+    "size_kb": 109.8,
+    "width": 768,
+    "height": 1024
   },
   {
     "original": "brioche cioccolato.png",
@@ -84,6 +100,14 @@
     "slug": "caffe",
     "url": "/brand/prodotti/caffe.jpg",
     "size_kb": 69.5,
+    "width": 1024,
+    "height": 683
+  },
+  {
+    "original": "calice prosecco.png",
+    "slug": "calice-prosecco",
+    "url": "/brand/prodotti/calice-prosecco.jpg",
+    "size_kb": 88.7,
     "width": 1024,
     "height": 683
   },

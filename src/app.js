@@ -1333,6 +1333,59 @@ const KIOSK_FEATURED = {
   ],
 };
 
+// Alias hardcoded per il match foto-prodotto. Ha la priorità sul match per prefisso
+// (troppo aggressivo: es. "Piadina classica" → "piadina-" → prendeva la prima foto
+// alfabetica = piadina-coppa, sbagliata!). Chiavi = slug del nome prodotto.
+const PRODOTTI_ALIAS = {
+  // Caffetteria
+  "caffe":             "caffe",
+  "espresso":          "caffe",
+  "cappuccino":        "caffe-con-schiuma",
+  "latte-macchiato":   "caffe-con-schiuma",
+  "marocchino":        "caffe-marocchino",
+  "caffe-marocchino":  "caffe-marocchino",
+  "ginseng":           "caffe-ginseng",
+  "caffe-ginseng":     "caffe-ginseng",
+  "orzo":              "caffe-d-orzo",
+  "caffe-orzo":        "caffe-d-orzo",
+  "caffe-d-orzo":      "caffe-d-orzo",
+  // Brioche
+  "brioche":             "brioche-vuota",
+  "brioche-vuota":       "brioche-vuota",
+  "brioche-cioccolato":  "brioche-cioccolato",
+  "brioche-crema":       "brioche-crema",
+  "brioche-marmellata":  "brioche-marmellata-di-albicocche",
+  "brioche-miele":       "brioche-miele-e-noci-pecan",
+  // Piadine
+  "piadina":           "piadina-crudo-rucola-e-squacquerone",
+  "piadina-classica":  "piadina-crudo-rucola-e-squacquerone",
+  "piadina-crudo":     "piadina-crudo-rucola-e-squacquerone",
+  "piadina-speciale":  "piadina-coppa-piacentina-rucola-e-squacquerone",
+  "piadina-coppa":     "piadina-coppa-piacentina-rucola-e-squacquerone",
+  // Tramezzini
+  "tramezzino":          "tramezzino-cotto-mozzarella-pomodoro-maionese",
+  "tramezzino-classico": "tramezzino-cotto-mozzarella-pomodoro-maionese",
+  "tramezzino-cotto":    "tramezzino-cotto-mozzarella-pomodoro-maionese",
+  // Insalatone
+  "insalatona":          "insalatona-instalata-verde-radicchio-mozzarella-tonno-pomodoro",
+  "insalata":            "insalatona-instalata-verde-radicchio-mozzarella-tonno-pomodoro",
+  // Taglieri
+  "tagliere":                "tagliere-coppa-piacentina-salame-piacentino-pancetta-piacentina",
+  "tagliere-salumi":         "tagliere-coppa-piacentina-salame-piacentino-pancetta-piacentina",
+  "tagliere-formaggi":       "tagliere-coppa-piacentina-salame-piacentino-pancetta-piacentina",
+  "tagliere-mini":           "tagliere-mini",
+  "tagliere-mini-condiviso": "tagliere-mini",
+  // Aperitivo
+  "birra-moretti":      "birra-moretti-33cl",
+  "birra-moretti-33cl": "birra-moretti-33cl",
+  "moretti":            "birra-moretti-33cl",
+  "prosecco":           "calice-prosecco",
+  "calice-prosecco":    "calice-prosecco",
+  // Bevande
+  "acqua-naturale":   "acqua-naturale",
+  "acqua-frizzante":  "acqua-frizzante",
+};
+
 // Manifest delle foto prodotti disponibili (caricato al boot). Mappa slug → url.
 // Usato per match automatico foto-prodotto quando product.image_url è null.
 let PRODOTTI_IMG_MAP = null;
@@ -1362,26 +1415,30 @@ function slugifyJs(s){
     .replace(/^-|-$/g, "");
 }
 
-// Ritorna URL foto prodotto: priorità a product.image_url, poi match per slug del nome.
-// Usato dai tile del menu kiosk e dalle altre viste prodotto.
+// Ritorna URL foto prodotto. Ordine di priorità:
+//   1. product.image_url (settato a mano in Menu admin → vince sempre)
+//   2. match esatto slug(name) === slug(foto)
+//   3. alias hardcoded PRODOTTI_ALIAS (es. "piadina-classica" → foto crudo)
+//   4. match estensivo "slug + dash" (es. "caffe-d" → "caffe-d-orzo")
+//   5. nessuna foto → emoji fallback
+// Il match per "prima parola" è stato RIMOSSO perché troppo aggressivo (es. tutte
+// le piadine prendevano la prima foto piadina-* in ordine alfabetico).
 function productImageUrl(p){
   if (!p) return null;
   if (p.image_url) return p.image_url;
   if (!PRODOTTI_IMG_MAP) return null;
   const slug = slugifyJs(p.name);
   if (!slug) return null;
+  // 2. Match esatto
   if (PRODOTTI_IMG_MAP[slug]) return PRODOTTI_IMG_MAP[slug];
+  // 3. Alias hardcoded
+  const aliased = PRODOTTI_ALIAS[slug];
+  if (aliased && PRODOTTI_IMG_MAP[aliased]) return PRODOTTI_IMG_MAP[aliased];
+  // 4. Match estensivo: slug del prodotto è prefisso ESATTO di una foto
+  //    (richiede dash dopo per evitare match troppo larghi)
   const keys = Object.keys(PRODOTTI_IMG_MAP);
-  // Match: slug del prodotto è prefisso di una foto disponibile
-  // (es. prodotto "Caffè marocchino" → cerca foto che inizia con "caffe-marocchino")
-  let m = keys.find((k) => k === slug || k.startsWith(slug + "-"));
+  const m = keys.find((k) => k.startsWith(slug + "-"));
   if (m) return PRODOTTI_IMG_MAP[m];
-  // Match parziale per prima parola significativa
-  const firstWord = slug.split("-")[0];
-  if (firstWord && firstWord.length >= 4){
-    m = keys.find((k) => k === firstWord || k.startsWith(firstWord + "-"));
-    if (m) return PRODOTTI_IMG_MAP[m];
-  }
   return null;
 }
 
