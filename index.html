@@ -777,9 +777,14 @@ main#appContent{
    SPLASH KIOSK · "vetrina viva del momento" (3 fasce orarie)
    ============================================================ */
 .kiosk-splash{
-  flex:1; display:flex; flex-direction: column; align-items:center; justify-content:center;
-  text-align:center; padding: 56px 40px 28px; position: relative;
+  flex:1; display:flex; flex-direction: column; align-items:center;
+  /* Allineato in alto per riempire il totem come nel mockup (no center vertical) */
+  justify-content: flex-start;
+  text-align: center;
+  padding: 84px 28px 28px;
+  position: relative;
   cursor: pointer;
+  overflow-y: auto;
   transition: background 1.2s ease, color 1.2s ease;
 }
 /* Variant per fascia: mattina/pranzo (chiari) e aperitivo (scuro cinematico) */
